@@ -68,3 +68,5 @@ tax_table_df <- as.data.frame(tax_table(ps))
 tax_table_df$ASV <- rownames(tax_table_df)
 print(tax_table_df)
 write.csv(tax_table_df, "../outputs/ASV_to_taxonomy.csv", row.names = TRUE)
+
+

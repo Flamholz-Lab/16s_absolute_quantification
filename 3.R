@@ -106,3 +106,4 @@ ggplot(plot_data_long, aes(x = Sample, y = Abundance, fill = Taxonomy)) +
   scale_fill_manual(values = colors) +
   guides(fill = guide_legend(title = "Genus", ncol = 1))
 
+
