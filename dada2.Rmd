@@ -1,0 +1,237 @@
+---
+title: "dada2"
+author: "albert li"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("dada2", version = "3.20")
+```
+
+```{r pressure, echo=FALSE}
+library(dada2); packageVersion("dada2")
+```
+
+```{r cars}
+path <- "/Users/albertli/Desktop/lab/Flamholz/projects/absolute_16s_quantification/data/Albert_sequencing_07222025/trimmed"
+fnFs <- sort(list.files(path, pattern="_R1_trimmed.fastq", full.names = TRUE))
+fnRs <- sort(list.files(path, pattern="_R2_trimmed.fastq", full.names = TRUE))
+```
+
+```{r cars}
+plotQualityProfile(fnFs[1:14])
+plotQualityProfile(fnRs[1:14])
+```
+cp samples ../trimmed
+
+
+```{r cars}
+samples <- scan(file.path(path, "samples"), what = "character")
+filtFs <- file.path(path, "filtered", paste0(samples, "_F_filt.fastq"))
+filtRs <- file.path(path, "filtered", paste0(samples, "_R_filt.fastq"))
+names(filtFs) <- samples
+names(filtRs) <- samples
+```
+
+```{r cars}
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(230,210),
+              maxN=0, maxEE=c(4,5), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=TRUE) 
+print(out)
+```
+
+```{r cars}
+errF <- learnErrors(filtFs, multithread = TRUE)
+errR <- learnErrors(filtRs, multithread=TRUE)
+plotErrors(errF, nominalQ=TRUE)
+```
+```{r}
+plotErrors(errR, nominalQ=TRUE)
+```
+
+```{r cars}
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+```
+
+```{r cars}
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+```
+
+```{r cars}
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+table(nchar(getSequences(seqtab)))
+```
+
+```{r cars}
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+```
+
+```{r cars}
+sum(seqtab.nochim)/sum(seqtab)
+```
+
+
+```{r cars}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- samples
+print(track)
+```
+
+
+Assigning taxonomy 
+
+```{r}
+taxa <- assignTaxonomy(seqtab.nochim, "/Users/albertli/Desktop/lab/Flamholz/projects/absolute_16s_quantification/data/dada2_taxomony/silva_nr99_v138.2_toSpecies_trainset.fa.gz", multithread=TRUE)
+```
+
+```{r}
+taxa.print <- taxa # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+
+```{r}
+library(phyloseq); packageVersion("phyloseq")
+library(ggplot2); packageVersion("ggplot2")
+theme_set(theme_bw())
+```
+```{r}
+library(Biostrings); packageVersion("Biostrings")
+```
+```{r}
+samples.out <- rownames(seqtab.nochim)
+subject <- sapply(strsplit(samples.out, "D"), `[`, 1)
+subject <- substr(subject,1,999)
+samdf <- data.frame(Subject=subject)
+rownames(samdf) <- samples.out
+```
+
+```{r}
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
+               sample_data(samdf), 
+               tax_table(taxa))
+dna <- Biostrings::DNAStringSet(taxa_names(ps))
+names(dna) <- taxa_names(ps)
+ps <- merge_phyloseq(ps, dna)
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
+ps
+
+```
+
+
+```{r}
+plot_richness(ps, measures=c("Shannon", "Simpson"), color="Subject")
+
+```
+
+
+```{r}
+top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
+ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.top20 <- prune_taxa(top20, ps.top20)
+plot_bar(ps.top20, x="Subject", fill="Family") + 
+  labs(y = "Fractional Abundance")
+```
+
+^^End of DADA2 Pipeline^^
+
+Construct a better relative abundance plot
+```{r}
+library(phyloseq)
+library(ggplot2)
+library(dplyr)
+
+
+top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
+ps.rel <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+ps.melt <- psmelt(ps.rel)
+ps.melt$Genus <- as.character(ps.melt$Genus)
+ps.melt$Genus[is.na(ps.melt$Genus)] <- "Unknown"
+ps.melt$Family_plot <- ps.melt$Genus
+ps.melt$Family_plot[!ps.melt$OTU %in% top20] <- "Other"
+ps.agg <- ps.melt %>%
+  group_by(Sample, Family_plot) %>%
+  summarise(Abundance = sum(Abundance), .groups = 'drop')
+unique_families <- unique(ps.agg$Family_plot[ps.agg$Family_plot != "Other"])
+dull_colors <- c(
+  "#A6CEE3", "#1F78B4", "#B2DF8A", "#33A02C", "#FB9A99", "#E31A1C",
+  "#FDBF6F", "#FF7F00", "#CAB2D6", "#6A3D9A", "#FFFF99", "#B15928",
+  "#1FF8FF", "#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E",
+  "#E6AB02", "#A6761D", "#666666", "#4B6A53", "#B249D5", "#7EDC45",
+  "#5C47B8", "#CFD251", "#FF69B4", "#69C86C", "#CD3E50", "#83D5AF",
+  "#DA6130", "#5E79B2", "#C29545", "#532A5A", "#5F7B35", "#C497CF",
+  "#773A27", "#7CB9CB", "#594E50", "#D3C4A8", "#C17E7F"
+)
+
+colors <- c("Other" = "lightgray")
+if(length(unique_families) > 0) {
+  colors <- c(colors, setNames(dull_colors[1:length(unique_families)], unique_families))
+}
+ps.agg$Family_plot <- factor(ps.agg$Family_plot, 
+                            levels = c("Other", unique_families))
+
+ggplot(ps.agg, aes(x = Sample, y = Abundance, fill = Family_plot)) +
+  geom_bar(stat = "identity") +
+  labs(y = "Fractional Abundance") +
+  scale_fill_manual(values = colors) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_line(color = "gray90", size = 0.3),
+    panel.grid.minor = element_blank(),
+    legend.title = element_text(face = "bold")
+  ) +
+  guides(fill = guide_legend(title = "Genus")) +
+  theme(
+    panel.grid.major = element_line(color = "gray90", size = 0.3),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 17),
+    axis.title.y = element_text(size = 17),
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12, face = "bold"),  # keep only this one
+    legend.position = "right"
+  )
+```
+```{r}
+
+
+sq <- getSequences(seqtab)
+id <- paste0("Abundance=", colSums(seqtab))
+names(sq) <- id
+# Write to .biom file
+write_biom(biom_object, "asv_table.biom")
+write.fasta(asv_seqs, names=paste0("ASV", seq_len(length(asv_seqs))), file.out="asv_sequences.fasta")
+
+dim(seqtab.nochim) 
+```
+
+Creat data tables to use for downstream analysis
+
+```{r}
+count_table <- as.data.frame(otu_table(ps))
+if (taxa_are_rows(ps)) {
+  count_table <- t(count_table)
+}
+print(count_table)
+write.csv(count_table, "../outputs/ASV_counts_per_sample.csv", row.names = TRUE)
+
+```
+```{r}
+tax_table_df <- as.data.frame(tax_table(ps))
+tax_table_df$ASV <- rownames(tax_table_df)
+print(tax_table_df)
+write.csv(tax_table_df, "../outputs/ASV_to_taxonomy.csv", row.names = TRUE)
+```
+Proceed to relative_to_absolute.rmd
+

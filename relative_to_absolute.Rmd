@@ -1,0 +1,339 @@
+---
+title: "relative_to_absolute"
+author: "albert li"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+Read data from the output of the dada2.rmd script
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+# install.packages("vegan")
+library(vegan)
+library(patchwork)
+
+taxonomy <- read.csv("../outputs/for_soil/ASV_to_taxonomy.csv", header = TRUE, row.names = 1)
+sequencing_data <- read.csv("../outputs/for_soil/ASV_counts_per_sample.csv", header = TRUE, row.names = 1)
+```
+
+```{r}
+# Use the mass-normalized data instead of sequencing_data_normalized
+other_cols <- setdiff(colnames(sequencing_data), c( "Sample"))
+asv_data <- sequencing_data[, other_cols]
+
+asv_totals <- colSums(asv_data)
+top_20_asvs <- names(sort(asv_totals, decreasing = TRUE)[1:20])
+
+plot_data <- asv_data
+plot_data$Sample <- rownames(plot_data)
+
+plot_data$Other <- rowSums(plot_data[, !colnames(plot_data) %in% c(top_20_asvs, "Sample")])
+
+plot_data <- plot_data[, c("Sample", top_20_asvs, "Other")]
+
+plot_data_long <- pivot_longer(plot_data, 
+                              cols = -Sample, 
+                              names_to = "ASV", 
+                              values_to = "Abundance")
+
+plot_data_long$ASV <- factor(plot_data_long$ASV, 
+                            levels = c("Other", top_20_asvs))
+
+ggplot(plot_data_long, aes(x = Sample, y = Abundance, fill = ASV)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  labs(title = "16s Read Counts by Sample", 
+       x = "Sample", 
+       y = "16s Reads") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),  # X-axis labels
+    axis.text.y = element_text(size = 12),                        # Y-axis labels
+    axis.title.x = element_text(size = 17),                       # X-axis title
+    axis.title.y = element_text(size = 17),                       # Y-axis title
+    plot.title = element_text(size = 16, face = "bold"),          # Plot title
+    legend.text = element_text(size = 10),                        # Legend text
+    legend.title = element_text(size = 12, face = "bold"),        # Legend title
+    legend.position = "right"
+  ) +
+  scale_fill_manual(values = colors) +
+  guides(fill = guide_legend(title = "Taxonomy", ncol = 1))
+```
+
+
+
+Identify spike-in
+```{r}
+spike_in_Imtechella <- subset(taxonomy,Family == "Flavobacteriaceae" & Genus == "Imtechella" & Species == "halotolerans") 
+spike_in_Allobacillus <- subset(taxonomy,Family == "Bacillaceae" & Genus == "Allobacillus" & Species == "halotolerans") 
+
+spike_in_asv_Imtechella <- rownames(spike_in_Imtechella)
+spike_in_asv_Allobacillus <- rownames(spike_in_Allobacillus)
+spike_in_asv_both <- c(spike_in_asv_Imtechella, spike_in_asv_Allobacillus)
+print(spike_in_asv_both)
+```
+
+
+BY CELL COUNT
+
+pool all spike in together
+```{r}
+sequencing_data$spike_in_sum <- rowSums(sequencing_data[, spike_in_asv_both, drop = FALSE])
+sequencing_data <- sequencing_data[, !colnames(sequencing_data) %in% spike_in_asv_both]
+print(sequencing_data)
+```
+
+
+normalize sequencing data set by spike-in
+```{r}
+sequencing_data$spike_in_sum
+```
+
+```{r}
+spike_in_cell_count = 4*(10^7) # changing based on spike-in volume, this is for 20 ul
+Q_spike_in_cell_count = 2*(10^6)
+Z_spike_in_cell_count = 4*(10^6)
+sequencing_data_normalized <- sequencing_data
+other_cols <- colnames(sequencing_data)[colnames(sequencing_data) != "spike_in_sum"]
+sequencing_data_normalized[, other_cols] <- spike_in_cell_count / sequencing_data$spike_in_sum * sequencing_data[, other_cols]
+sequencing_data_normalized <- sequencing_data_normalized[, colnames(sequencing_data_normalized) != "spike_in_sum"]
+print(sequencing_data_normalized)
+write.csv(sequencing_data_normalized, "../outputs/for_soil/ASV_spikein_removed.csv", row.names = TRUE)
+```
+
+normalize sequencing data set by sample mass - check my note book
+```{r}
+mass_data <- read.csv("../RU_forest_sample_mass.csv")
+asv_data_with_mass <- merge(sequencing_data_normalized, mass_data,
+                           by.x = "row.names", by.y = "sample", all.x = TRUE)
+print(asv_data_with_mass)
+rownames(asv_data_with_mass) <- asv_data_with_mass$Row.names
+asv_data_with_mass$Row.names <- NULL
+print(asv_data_with_mass)
+other_cols <- setdiff(colnames(asv_data_with_mass), c("mass.g."))
+asv_data_normalized_by_mass <- asv_data_with_mass[, other_cols] / asv_data_with_mass$mass.g.
+asv_data_normalized_by_mass$Sample <- rownames(asv_data_normalized_by_mass)
+print(asv_data_normalized_by_mass)
+write.csv(asv_data_normalized_by_mass, "normalized_sequencing_data.csv", row.names = TRUE)
+```
+
+Comparison of the coefficient of variance before and after standardization by spike in
+
+```{r}
+numeric_cols <- sapply(asv_data_normalized_by_mass, is.numeric)
+
+CV_df <- data.frame(
+  Sample = rownames(asv_data_normalized_by_mass),
+  Total_Abundance = rowSums(asv_data_normalized_by_mass[, numeric_cols]),
+  Total_Reads = rowSums(sequencing_data[, numeric_cols]))
+
+print(CV_df)
+
+cv_results <- data.frame(
+  Subset = character(),
+  Total_Abundance_CV = numeric(),
+  Total_Reads_CV = numeric(),
+  stringsAsFactors = FALSE
+)
+
+
+subset_name <- "H Site Samples"
+selected_samples <- c("a2_H1_S1", "a2_H2_S2", "a2_H3_S3")
+subset_df <- CV_df[CV_df$Sample %in% selected_samples, ]
+total_abundance_cv <- sd(subset_df$Total_Abundance) / mean(subset_df$Total_Abundance)
+total_reads_cv <- sd(subset_df$Total_Reads) / mean(subset_df$Total_Reads)
+cv_results <- rbind(
+  cv_results,
+  data.frame(
+    Subset = subset_name,
+    Total_Abundance_CV = total_abundance_cv,
+    Total_Reads_CV = total_reads_cv
+  )
+)
+
+subset_name <- "M Site Samples"
+selected_samples <- c("a2_M1_S4", "a2_M2_S5", "a2_M3_S6")
+subset_df <- CV_df[CV_df$Sample %in% selected_samples, ]
+total_abundance_cv <- sd(subset_df$Total_Abundance) / mean(subset_df$Total_Abundance)
+total_reads_cv <- sd(subset_df$Total_Reads) / mean(subset_df$Total_Reads)
+cv_results <- rbind(
+  cv_results,
+  data.frame(
+    Subset = subset_name,
+    Total_Abundance_CV = total_abundance_cv,
+    Total_Reads_CV = total_reads_cv
+  )
+)
+cv_results
+
+subset_name <- "L Site Samples"
+selected_samples <- c("a2_L1_S7", "a2_L2_S8", "a2_L3_S9")
+subset_df <- CV_df[CV_df$Sample %in% selected_samples, ]
+total_abundance_cv <- sd(subset_df$Total_Abundance) / mean(subset_df$Total_Abundance)
+total_reads_cv <- sd(subset_df$Total_Reads) / mean(subset_df$Total_Reads)
+cv_results <- rbind(
+  cv_results,
+  data.frame(
+    Subset = subset_name,
+    Total_Abundance_CV = total_abundance_cv,
+    Total_Reads_CV = total_reads_cv
+  )
+)
+cv_results
+```
+```{r}
+
+cv_results_long <- melt(cv_results, id.vars = "Subset")
+
+cv_results_long$variable <- factor(cv_results_long$variable, levels = c("Total_Reads_CV", "Total_Abundance_CV"))
+
+ggplot(cv_results_long, aes(x = Subset, y = value, fill = variable)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Coefficient of Variation by Sites",
+    x = "Sites",
+    y = "Coefficient of Variation",
+    fill = "Measurement Type"
+  ) +
+  theme_bw() +
+  scale_fill_manual(
+    values = c("Total_Reads_CV" = "Brown", "Total_Abundance_CV" = "#1f77b4"),
+    labels = c("Total_Reads_CV" = "Before Rescaling", "Total_Abundance_CV" = "After Rescaling")
+  ) +
+  theme(
+   axis.text.x = element_text(angle = 45, hjust = 1, size = 12),  # X-axis labels
+    axis.text.y = element_text(size = 12),                        # Y-axis labels
+    axis.title.x = element_text(size = 17),                       # X-axis title
+    axis.title.y = element_text(size = 17),                       # Y-axis title
+    plot.title = element_text(size = 16, face = "bold"),          # Plot title
+    legend.text = element_text(size = 10),                        # Legend text
+    legend.title = element_text(size = 12, face = "bold"),        # Legend title
+    legend.position = "right"
+  )
+
+```
+
+
+take normalize dataset and construct bargraph with, cell count in in y axis 
+```{r}
+other_cols <- setdiff(colnames(asv_data_normalized_by_mass), c("Sample"))
+asv_data <- asv_data_normalized_by_mass[, other_cols]
+
+asv_totals <- colSums(asv_data)
+top_20_asvs <- names(sort(asv_totals, decreasing = TRUE)[1:20])
+
+plot_data <- asv_data
+plot_data$Sample <- rownames(plot_data)
+
+plot_data$Other <- rowSums(plot_data[, !colnames(plot_data) %in% c(top_20_asvs, "Sample")])
+
+plot_data <- plot_data[, c("Sample", top_20_asvs, "Other")]
+
+plot_data_long <- pivot_longer(plot_data, 
+                              cols = -Sample, 
+                              names_to = "ASV", 
+                              values_to = "Abundance")
+
+taxonomy$ASV <- rownames(taxonomy)
+tax_labels <- setNames(taxonomy$Genus, taxonomy$ASV) 
+
+plot_data_long$Taxonomy <- ifelse(plot_data_long$ASV == "Other", 
+                                  "Other", 
+                                  tax_labels[plot_data_long$ASV])
+
+plot_data_long$Taxonomy[is.na(plot_data_long$Taxonomy)] <- plot_data_long$ASV[is.na(plot_data_long$Taxonomy)]
+
+top_20_taxonomy <- tax_labels[top_20_asvs]
+taxonomy_counts <- table(top_20_taxonomy)
+duplicated_taxa <- names(taxonomy_counts[taxonomy_counts > 1])
+
+for (taxa in duplicated_taxa) {
+  matching_asvs <- names(top_20_taxonomy[top_20_taxonomy == taxa])
+  for (i in seq_along(matching_asvs)) {
+    asv_name <- matching_asvs[i]
+    plot_data_long$Taxonomy[plot_data_long$ASV == asv_name] <- 
+      paste(taxa, paste0("(", asv_name, ")"))
+  }
+}
+
+unique_taxonomy_levels <- unique(c("Other", plot_data_long$Taxonomy[plot_data_long$ASV %in% top_20_asvs]))
+plot_data_long$Taxonomy <- factor(plot_data_long$Taxonomy, 
+                                  levels = unique_taxonomy_levels)
+
+colors <- c("lightgray", 
+                  colorRampPalette(c(
+  "#A6CEE3", "#1F78B4", "#B2DF8A", "#33A02C", "#FB9A99", "#E31A1C",
+  "#FDBF6F", "#FF7F00", "#CAB2D6", "#6A3D9A", "#FFFF99", "#B15928",
+  "#1FF8FF", "#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E",
+  "#E6AB02", "#A6761D", "#666666", "#4B6A53", "#B249D5", "#7EDC45",
+  "#5C47B8", "#CFD251", "#FF69B4", "#69C86C", "#CD3E50", "#83D5AF",
+  "#DA6130", "#5E79B2", "#C29545", "#532A5A", "#5F7B35", "#C497CF",
+  "#773A27", "#7CB9CB", "#594E50", "#D3C4A8", "#C17E7F"
+))(20))
+
+ggplot(plot_data_long, aes(x = Sample, y = Abundance, fill = Taxonomy)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  labs(title = "Cell Counts by Sample", 
+       x = "Sample", 
+       y = "Absolute Abundance") +
+  theme(
+    panel.grid.major = element_line(color = "gray90", size = 0.3),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 17),
+    axis.title.y = element_text(size = 17),
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12, face = "bold"),  # keep only this one
+    legend.position = "right"
+  ) +
+  scale_fill_manual(values = colors) +
+  guides(fill = guide_legend(title = "Genus", ncol = 1)) +
+  scale_x_discrete(labels = c(
+    "a2_B_S10" = "Blank 1",
+    "a2_B_SI_S11" = "Blank 2",
+    "a2_H1_S1" = "H Site Rep1", "a2_H2_S2" = "H Site Rep2", "a2_H3_S3" = "H Site Rep3",
+    "a2_M1_S4" = "M Site Rep1", "a2_M2_S5" = "M Site Rep2", "a2_M3_S6" = "M Site Rep3",
+    "a2_L1_S7" = "L Site Rep1", "a2_L2_S8" = "L Site Rep2", "a2_L3_S9" = "L Site Rep3")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+alpha diversity indexes
+
+```{r}
+shannon_diversity <- diversity(sequencing_data_normalized, index = "shannon")
+simpson_diversity <- diversity(sequencing_data_normalized, index = "simpson")
+
+
+diversity_df <- data.frame(
+  Sample = rownames(sequencing_data_normalized),
+  Shannon = shannon_diversity,
+  Simpson = simpson_diversity
+)
+
+print(diversity_df$Sample)
+```
+```{r}
+p1 <- ggplot(diversity_df, aes(x = Sample, y = Shannon, color = Sample)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  labs(title = "Shannon", y = "Alpha Diversity Measure", x = "samples") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"  # Remove legend
+  )
+
+p2 <- ggplot(diversity_df, aes(x = Sample, y = Simpson, color = Sample)) +
+  geom_point(size = 3) +
+  theme_bw() +
+  labs(title = "Simpson", y = "Alpha Diversity Measure", x = "samples") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"  # Remove legend
+  )
+combined_plot <- p1 + p2
+print(combined_plot)
+```

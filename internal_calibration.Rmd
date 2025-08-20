@@ -1,0 +1,707 @@
+---
+title: "internal_calibration"
+author: "albert li"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+# install.packages("vegan")
+library(vegan)
+library(patchwork)
+
+taxonomy <- read.csv("../outputs/for_standard/ASV_to_taxonomy.csv", header = TRUE, row.names = 1)
+sequencing_data <- read.csv("../outputs/for_standard/ASV_counts_per_sample.csv", header = TRUE, row.names = 1)
+spike_in_Imtechella <- subset(taxonomy,Family == "Flavobacteriaceae" & Genus == "Imtechella" & Species == "halotolerans") 
+spike_in_Allobacillus <- subset(taxonomy,Family == "Bacillaceae" & Genus == "Allobacillus" & Species == "halotolerans") 
+
+spike_in_asv_Imtechella <- rownames(spike_in_Imtechella)
+spike_in_asv_Allobacillus <- rownames(spike_in_Allobacillus)
+spike_in_asv_Allobacillus
+```
+
+```{r}
+sequencing_data$Allobacillus<- rowSums(sequencing_data[, spike_in_asv_Allobacillus, drop = FALSE])
+sequencing_data <- sequencing_data[, !colnames(sequencing_data) %in% spike_in_asv_Allobacillus]
+print(sequencing_data$Allobacillus)
+```
+
+```{r}
+sequencing_data$Imtechella<- rowSums(sequencing_data[, spike_in_asv_Imtechella, drop = FALSE])
+sequencing_data <- sequencing_data[, !colnames(sequencing_data) %in% spike_in_asv_Imtechella]
+print(sequencing_data$Imtechella)
+```
+
+```{r}
+sample_cols <- setdiff(colnames(sequencing_data), c("Imtechella","Allobacillus"))
+sequencing_data$sample_asv<- rowSums(sequencing_data[, sample_cols, drop = FALSE])
+sequencing_data <- sequencing_data[, !colnames(sequencing_data) %in% sample_cols]
+sequencing_data$sum<- rowSums(sequencing_data)
+print(sequencing_data)
+```
+
+```{r}
+Allobacillus_absolute = 1.4*(10^8)
+Imtechella_absolute = 6*(10^7)
+sequencing_data$Allobacillus_absolute <- Allobacillus_absolute
+sequencing_data$Imtechella_absolute <- Imtechella_absolute
+
+sequencing_data$Allobacillus_fraction <- sequencing_data$Allobacillus / sequencing_data$sum 
+sequencing_data$Imtechella_fraction <- sequencing_data$Imtechella / sequencing_data$sum 
+sequencing_data <- sequencing_data[!rownames(sequencing_data) %in% c("a2_B_S10", "a2_B_SI_S11"), ]
+sequencing_data$fractions <- sequencing_data$Imtechella / sequencing_data$Allobacillus
+AL = sum(sequencing_data$Allobacillus)
+IM = sum(sequencing_data$Imtechella)
+x = IM/AL
+x
+print(sequencing_data)
+```
+
+```{r}
+sample_metadata <- data.frame(
+  sample = c("a2_H1_S1", "a2_H2_S2", "a2_H3_S3",
+             "a2_M1_S4", "a2_M2_S5", "a2_M3_S6",
+             "a2_L1_S7", "a2_L2_S8", "a2_L3_S9"),
+  treatment = c("Site H", "Site H", "Site H",
+                "Site M", "Site M", "Site M",
+                "Site L", "Site L", "Site L")
+)
+
+# Prepare data
+ggplot(plot_data, aes(x = absolute, y = fraction, color = treatment, shape = species)) +
+  geom_point(size = 4, alpha = 0.8) +
+  geom_line(aes(group = sample), alpha = 0.5, color = "black") +
+  theme_bw() +
+  labs(
+    x = "Theoretical Spike-in 16S Reads Added",
+    y = "Actual Reads Fraction",
+    color = "Site",
+    shape = "Species"
+  ) +
+  scale_x_continuous(labels = scales::scientific) +
+  theme(
+    axis.text = element_text(size = 12),        # Axis tick labels
+    axis.title = element_text(size = 16),       # Axis titles
+    legend.text = element_text(size = 12),      # Legend labels
+    legend.title = element_text(size = 14, face = "bold"),  # Legend titles
+    plot.title = element_text(size = 18, face = "bold"),    # Plot title (if added)
+    legend.position = "right"
+  )
+
+
+
+```
+
+```{r}
+
+
+# Prepare data
+plot_data <- sequencing_data %>%
+  mutate(sample = rownames(sequencing_data)) %>%
+  left_join(sample_metadata, by = "sample") %>%
+  pivot_longer(
+    cols = c(Allobacillus_absolute, Imtechella_absolute, 
+             Allobacillus_fraction, Imtechella_fraction),
+    names_to = "measure",
+    values_to = "value"
+  ) %>%
+  separate(measure, into = c("species", "type"), sep = "_") %>%
+  pivot_wider(names_from = type, values_from = value) %>%
+  filter(!is.na(absolute), !is.na(fraction))
+
+ggplot(plot_data, aes(x = absolute, y = fraction, color = treatment, shape = species)) +
+  geom_point(size = 4, alpha = 0.8) +
+  geom_line(aes(group = sample), alpha = 0.5, color = "black") +
+  # Add the theoretical red line
+  geom_segment(x = 6e7, y = 0.15, xend = 1.4e8, yend = 0.348, 
+               color = "red", size = 1.2, linetype = "dashed") +
+  # Add text annotation
+  annotate("text", x = 1.2e8, y = 0.28, label = "Theoretical Slope", 
+           color = "red", size = 5, angle = 38, hjust = 0.5) +
+  theme_bw() +
+  labs(
+    x = "Theoretical Spike-in 16S Reads Added",
+    y = "Actual Reads Fraction",
+    color = "Site",
+    shape = "Species"
+  ) +
+  scale_x_continuous(labels = scales::scientific) + theme(
+    axis.text = element_text(size = 12),        
+    axis.title = element_text(size = 16),       
+    legend.text = element_text(size = 12),      
+    legend.title = element_text(size = 14, face = "bold"),  
+    plot.title = element_text(size = 18, face = "bold"),    
+    legend.position = "right"
+  )
+```
+
+z
+```{r}
+slope_data <- plot_data %>%
+  group_by(sample) %>%
+  summarise(
+    slope = diff(fraction) / diff(absolute),
+    .groups = "drop"
+  )
+mean(slope_data$slope)
+```
+
+```{r}
+df <- read.csv("../outputs/for_soil/ASV_counts_per_sample.csv", header = TRUE, row.names = 1)
+df <- df[, !colnames(df) %in% spike_in_asv_both]
+df <- df[, colSums(df) >= 10]
+df <- sweep(df, 1, rowSums(df), FUN = "/")
+print(df)
+#install.packages("gridExtra")
+#library(corrplot)
+#library(GGally)
+#library(gridExtra)
+df1 <- df[rownames(df) %in% c("a2_H1_S1", "a2_H2_S2","a2_H3_S3"), ]
+print(df1)
+```
+```{r}
+df <- read.csv("../outputs/for_soil/ASV_spikein_removed.csv", header = TRUE, row.names = 1)
+df <- df[, !(colnames(df) %in% c("a2_B_S10","a2_B_SI_S11"))]
+
+library(pheatmap)
+
+# Assume your data is in 'df' (samples as rows, taxa/features as columns)
+
+# Step 1: Add pseudocount to avoid log(0)
+pseudocount <- 1e-6
+df_pseudo <- df + pseudocount
+
+# Step 2: Log-transform
+df_log <- log10(df_pseudo)
+
+# Step 3: Remove constant columns (std dev == 0) to avoid NA in correlation
+non_constant_cols <- sapply(df_log, function(x) sd(x, na.rm = TRUE) > 0)
+df_log <- df_log[, non_constant_cols]
+
+# Step 4: Remove rows with all zeros or NAs (optional depending on input)
+df_log <- df_log[rowSums(is.na(df_log)) < ncol(df_log), ]
+
+# Step 5: Calculate correlation matrix (features across samples)
+cor_matrix <- cor(t(df_log), method = "pearson", use = "pairwise.complete.obs")
+
+# Optional: Replace NA with 0 or leave as NA to mask in heatmap
+cor_matrix[is.na(cor_matrix)] <- 0
+
+# Step 6: Plot heatmap
+pheatmap(
+  cor_matrix,
+  color = colorRampPalette(c("blue", "white", "red"))(100),
+  border_color = NA,
+  clustering_method = "complete",
+  main = "Log10-transformed Pearson Correlation Heatmap"
+)
+
+
+```
+
+
+```{r}
+samples <- rownames(df1)
+plots <- list()
+
+make_plot <- function(x_raw, y_raw, x_label, y_label, n_bootstrap = 1000) {
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Original correlation
+  cor_result <- cor.test(x, y, method = "pearson")
+  r <- cor_result$estimate
+  p <- cor_result$p.value
+  
+  # Bootstrap correlation
+  n <- length(x)
+  r_boot <- replicate(n_bootstrap, {
+    idx <- sample(seq_len(n), size = n, replace = TRUE)
+    cor(x[idx], y[idx])
+  })
+  
+  # Bootstrap CI
+  ci <- quantile(r_boot, probs = c(0.025, 0.975))
+  
+  ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = paste0(x_label),
+      y = paste0(y_label),
+      title = paste0(
+        "r = ", round(r, 3),
+        ", p = ", signif(p, 3),
+        "\n95% CI: [", round(ci[1], 3), ", ", round(ci[2], 3), "]"
+      )
+    ) +
+    theme_minimal() +
+    coord_fixed()
+}
+
+
+# Plot 1: Sample 1 vs Sample 2
+plots[[1]] <- make_plot(
+  x_raw = as.numeric(df[samples[1], ]),
+  y_raw = as.numeric(df[samples[2], ]),
+  x_label = "H Site Rep1",
+  y_label = "H Site Rep2"
+)
+
+# Plot 2: Sample 1 vs Sample 3
+plots[[2]] <- make_plot(
+  x_raw = as.numeric(df[samples[1], ]),
+  y_raw = as.numeric(df[samples[3], ]),
+  x_label = "H Site Rep1",
+  y_label = "H Site Rep3"
+)
+
+# Plot 3: Sample 2 vs Sample 3
+plots[[3]] <- make_plot(
+  x_raw = as.numeric(df[samples[2], ]),
+  y_raw = as.numeric(df[samples[3], ]),
+  x_label = "H Site Rep2",
+  y_label = "H Site Rep3"
+)
+
+# Display
+grid.arrange(grobs = plots, ncol = 3)
+```
+
+
+
+```{r}
+print(df)
+df4 <- df[rownames(df) %in% c("a2_H3_S3","a2_M3_S6","a2_L3_S9"),]
+df4 <- df4[, colSums(df4) >= 10]
+print(df4)
+```
+
+```{r}
+samples <- rownames(df4)
+plots <- list()
+make_plot <- function(x_raw, y_raw, x_label, y_label, n_bootstrap = 1000) {
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Original correlation
+  cor_result <- cor.test(x, y, method = "pearson")
+  r <- cor_result$estimate
+  p <- cor_result$p.value
+  
+  # Bootstrap correlation
+  n <- length(x)
+  r_boot <- replicate(n_bootstrap, {
+    idx <- sample(seq_len(n), size = n, replace = TRUE)
+    cor(x[idx], y[idx])
+  })
+  
+  # Bootstrap CI
+  ci <- quantile(r_boot, probs = c(0.025, 0.975))
+  
+  ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = paste0(x_label),
+      y = paste0(y_label),
+      title = paste0(
+        "r = ", round(r, 3),
+        ", p = ", signif(p, 3),
+        "\n95% CI: [", round(ci[1], 3), ", ", round(ci[2], 3), "]"
+      )
+    ) +
+    theme_minimal() +
+    coord_fixed()
+}
+
+
+
+# Plot 1: Sample 1 vs Sample 2
+plots[[1]] <- make_plot(
+  x_raw = as.numeric(df[samples[1], ]),
+  y_raw = as.numeric(df[samples[2], ]),
+  x_label = "H Site Rep1",
+  y_label = "M Site Rep1"
+)
+
+# Plot 2: Sample 1 vs Sample 3
+plots[[2]] <- make_plot(
+  x_raw = as.numeric(df[samples[1], ]),
+  y_raw = as.numeric(df[samples[3], ]),
+  x_label = "H Site Rep1",
+  y_label = "L Site Rep1"
+)
+
+# Plot 3: Sample 2 vs Sample 3
+plots[[3]] <- make_plot(
+  x_raw = as.numeric(df[samples[2], ]),
+  y_raw = as.numeric(df[samples[3], ]),
+  x_label = "M Site Rep1",
+  y_label = "L Site Rep1"
+)
+
+# Display
+grid.arrange(grobs = plots, ncol = 3)
+```
+```{r}
+# instead of ASV, group by actual taxomony(genus, family...) - does not work so well
+
+df <- read.csv("ASV_counts_per_sample.csv", header = TRUE, row.names = 1)
+df <- df[, !colnames(df) %in% spike_in_asv_both]
+df <- sweep(df, 1, rowSums(df), FUN = "/")
+taxonomy <- read.csv("ASV_to_taxonomy.csv", header = TRUE, row.names = 1)
+taxonomy_level <- "Genus"
+asv_to_genus <- taxonomy[[taxonomy_level]]
+names(asv_to_genus) <- rownames(taxonomy)
+shared_asvs <- intersect(colnames(df), names(asv_to_genus))
+df <- df[, shared_asvs]
+asv_to_genus <- asv_to_genus[shared_asvs]
+valid_asvs <- !is.na(asv_to_genus)
+df <- df[, valid_asvs]
+asv_to_genus <- asv_to_genus[valid_asvs]
+colnames(df) <- asv_to_genus
+df_t <- t(df)
+df_combined <- rowsum(df_t, group = colnames(df))
+df_final <- t(df_combined)
+dim(df_final)
+```
+
+```{r}
+df4 <- df[rownames(df) %in% c("a2_L1_S7","a2_H1_S1","a2_M1_S4"),]
+df4 <- df4[, colSums(df4) >= 10]
+print(df4)
+```
+
+```{r}
+samples <- rownames(df4)
+plots <- list()
+
+# Helper function for one pairwise plot
+make_plot <- function(x_raw, y_raw, x_label, y_label) {
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Perform correlation test
+  cor_result <- cor.test(x, y, method = "pearson")
+  r <- cor_result$estimate
+  p <- cor_result$p.value
+  
+  ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = paste0(x_label, " (log10 + 1e-6)"),
+      y = paste0(y_label, " (log10 + 1e-6)"),
+      title = paste0("r = ", round(r, 2), ", p = ", signif(p, 2))
+    ) +
+    theme_minimal() +
+    coord_fixed()
+}
+
+
+# Plot 1: Sample 1 vs Sample 2
+plots[[1]] <- make_plot(
+  x_raw = as.numeric(df_final[samples[1], ]),
+  y_raw = as.numeric(df_final[samples[2], ]),
+  x_label = "Site",
+  y_label = samples[2]
+)
+
+# Plot 2: Sample 1 vs Sample 3
+plots[[2]] <- make_plot(
+  x_raw = as.numeric(df_final[samples[1], ]),
+  y_raw = as.numeric(df_final[samples[3], ]),
+  x_label = samples[1],
+  y_label = samples[3]
+)
+
+# Plot 3: Sample 2 vs Sample 3
+plots[[3]] <- make_plot(
+  x_raw = as.numeric(df_final[samples[2], ]),
+  y_raw = as.numeric(df_final[samples[3], ]),
+  x_label = samples[2],
+  y_label = samples[3]
+)
+
+# Display
+grid.arrange(grobs = plots, ncol = 3)
+```
+```{r}
+samples <- rownames(df1)
+plots <- list()
+
+make_plot <- function(x_raw, y_raw, x_label, y_label) {
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Perform correlation test
+  cor_result <- cor.test(x, y, method = "pearson")
+  r <- cor_result$estimate
+  p <- cor_result$p.value
+  
+  ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = paste0(x_label, " (log10 + 1e-6)"),
+      y = paste0(y_label, " (log10 + 1e-6)"),
+      title = paste0("r = ", round(r, 2), ", p = ", signif(p, 2))
+    ) +
+    theme_minimal() +
+    coord_fixed()
+}
+
+plots[[1]] <- make_plot(
+  x_raw = as.numeric(df_final[samples[1], ]),
+  y_raw = as.numeric(df_final[samples[2], ]),
+  x_label = samples[1],
+  y_label = samples[2]
+)
+
+# Plot 2: Sample 1 vs Sample 3
+plots[[2]] <- make_plot(
+  x_raw = as.numeric(df_final[samples[1], ]),
+  y_raw = as.numeric(df_final[samples[3], ]),
+  x_label = samples[1],
+  y_label = samples[3]
+)
+
+# Plot 3: Sample 2 vs Sample 3
+plots[[3]] <- make_plot(
+  x_raw = as.numeric(df_final[samples[2], ]),
+  y_raw = as.numeric(df_final[samples[3], ]),
+  x_label = samples[2],
+  y_label = samples[3]
+)
+
+# Display
+grid.arrange(grobs = plots, ncol = 3)
+```
+
+```{r}
+df <- read.csv("../outputs/for_standard/ASV_counts_per_sample.csv", header = TRUE, row.names = 1)
+df <- df[, !colnames(df) %in% spike_in_asv_both]
+df <- df[, colSums(df) >= 10]
+df <- sweep(df, 1, rowSums(df), FUN = "/")
+print(df)
+#install.packages("gridExtra")
+#library(corrplot)
+#library(GGally)
+#library(gridExtra)
+df1 <- df[rownames(df) %in% c("Q_2_1_S1", "Z_2_1_S8"), ]
+df2 <- df[rownames(df) %in% c("Q_2_1_S1", "Q_200_1_S5"), ]
+print(df2)
+```
+```{r}
+samples <- rownames(df1)
+plots <- list()
+make_plot <- function(x_raw, y_raw, x_label, y_label, n_bootstrap = 1000) {
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Original correlation
+  cor_result <- cor.test(x, y, method = "pearson")
+  r <- cor_result$estimate
+  p <- cor_result$p.value
+  
+  # Bootstrap correlation
+  n <- length(x)
+  r_boot <- replicate(n_bootstrap, {
+    idx <- sample(seq_len(n), size = n, replace = TRUE)
+    cor(x[idx], y[idx])
+  })
+  
+  # Bootstrap CI
+  ci <- quantile(r_boot, probs = c(0.025, 0.975))
+  
+  ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = paste0(x_label),
+      y = paste0(y_label),
+      title = paste0(
+        "r = ", round(r, 3),
+        ", p = ", signif(p, 3),
+        "\n95% CI: [", round(ci[1], 3), ", ", round(ci[2], 3), "]"
+      )
+    ) +
+    theme_bw() +
+    coord_fixed() + theme(
+      axis.title = element_text(size = 20),
+      axis.text = element_text(size = 18),
+      legend.title = element_text(size = 50),
+      legend.text = element_text(size = 50),
+      plot.title = element_text(size = 22, face = "bold")
+    )
+}
+
+
+
+make_plot(
+  x_raw = as.numeric(df1[samples[1], ]),
+  y_raw = as.numeric(df1[samples[2], ]),
+  x_label = "Qiagen Extracted 2-Fold Dlilution Rep1",
+  y_label = "Zymo Extracted 2-Fold Dlilution Rep1"
+)
+```
+
+```{r}
+samples <- rownames(df2)
+plots <- list()
+make_plot <- function(x_raw, y_raw, x_label, y_label, n_bootstrap = 1000) {
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Original correlation
+  cor_result <- cor.test(x, y, method = "pearson")
+  r <- cor_result$estimate
+  p <- cor_result$p.value
+  
+  # Bootstrap correlation
+  n <- length(x)
+  r_boot <- replicate(n_bootstrap, {
+    idx <- sample(seq_len(n), size = n, replace = TRUE)
+    cor(x[idx], y[idx])
+  })
+  
+  # Bootstrap CI
+  ci <- quantile(r_boot, probs = c(0.025, 0.975))
+  
+  ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = paste0(x_label),
+      y = paste0(y_label),
+      title = paste0(
+        "r = ", round(r, 3),
+        ", p = ", signif(p, 3),
+        "\n95% CI: [", round(ci[1], 3), ", ", round(ci[2], 3), "]"
+      )
+    ) +
+    theme_bw() +
+    coord_fixed() + theme(
+      axis.title = element_text(size = 20),
+      axis.text = element_text(size = 18),
+      legend.title = element_text(size = 20),
+      legend.text = element_text(size =20),
+      plot.title = element_text(size = 22, face = "bold")
+    )
+}
+
+
+
+make_plot(
+  x_raw = as.numeric(df2[samples[1], ]),
+  y_raw = as.numeric(df2[samples[2], ]),
+  x_label = "Qiagen Extracted 2-Fold Dlilution Rep1",
+  y_label = "Qiagen Extracted 200-Fold Dlilution Rep1"
+)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(broom)  # for tidy() on models
+
+library(tidyverse)
+
+
+# Base data
+df <- data.frame(
+  Dilution = c(2, 2, 20, 20, 200, 200, 2, 2, 20, 20, 200, 200),
+  Calculated = c(923293023, 1084366812, 120714181, 146717863, 13533603, 13610669,
+                 959721739, 954408602, 95107246, 86544144, 9211501, 8990431),
+  Theoretical = c(500000000, 500000000, 50000000, 50000000, 5000000, 5000000,
+                  500000000, 500000000, 50000000, 50000000, 5000000, 5000000),
+  Type = c("Zymo", "Zymo", "Zymo", "Zymo", "Zymo", "Zymo",
+           "Qiagen", "Qiagen", "Qiagen", "Qiagen", "Qiagen", "Qiagen")
+)
+
+# Pivot long and make Plot_Group
+df_long <- df %>%
+  pivot_longer(cols = c("Calculated", "Theoretical"),
+               names_to = "Count_Type", values_to = "Count") %>%
+  mutate(
+    log10_count = log10(Count),
+    log10_dilution = log10(Dilution),
+    Group = case_when(
+      Count_Type == "Calculated" ~ Type,
+      Count_Type == "Theoretical" ~ "Theoretical"
+    )
+  )
+
+
+
+# Calculate stats for each group
+stats <- df_long %>%
+  group_by(Group) %>%
+  summarise(
+    r = cor(log10_dilution, log10_count),
+    slope = coef(lm(log10_count ~ log10_dilution))[2],
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0(Group, " (r = ", round(r, 2),
+                   ", slope = ", round(slope, 3), ")")
+  )
+
+# Merge stats for labeling
+df_long <- df_long %>%
+  left_join(stats, by = c("Group"))
+
+# Assign plotting label
+df_long <- df_long %>%
+  mutate(color_label = label)
+
+# Define manual colors
+custom_colors <- c("#1f77b4","gray40", "dark green"
+)
+# In case actual r/slope differ, match dynamically:
+names(custom_colors) <- stats$label
+custom_colors[["Theoretical"]] <- "gray40"  # fallback
+
+
+desired_order <- c(
+  stats %>% filter(Group == "Zymo") %>% pull(label),
+  stats %>% filter(Group == "Qiagen") %>% pull(label),stats %>% filter(Group == "Theoretical") %>% pull(label)
+)
+df_long <- df_long %>%
+  mutate(color_label = factor(color_label, levels = desired_order))
+# Plot
+ggplot(df_long, aes(x = log10_dilution, y = log10_count, color = color_label)) +
+  geom_point(size = 3, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", size = 1.2) +
+  scale_color_manual(values = custom_colors) +
+  labs(
+    x = "Log10 Dilution Factor",
+    y = "Log10 Cell Count",
+    title = "Calculated vs Theoretical Cell Counts by Extraction Method"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    legend.box = "right",
+    legend.direction = "vertical",
+    legend.title = element_blank(),
+    legend.justification = "left",
+    legend.text = element_text(face = "bold", size = 20),
+    axis.title = element_text(size = 20),
+    axis.text = element_text(size = 18)
+  )
+
+
+```
+

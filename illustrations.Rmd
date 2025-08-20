@@ -1,0 +1,1354 @@
+---
+title: "illustatrations"
+author: "albert li"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+# install.packages("vegan")
+library(vegan)
+library(patchwork)
+library(tibble)
+library(scales)
+
+taxonomy <- read.csv("../outputs/for_standard/ASV_to_taxonomy.csv", header = TRUE, row.names = 1)
+sequencing_data <- read.csv("../outputs/for_standard/ASV_counts_per_sample.csv", header = TRUE, row.names = 1)
+
+
+spike_in_Imtechella <- subset(taxonomy,Family == "Flavobacteriaceae" & Genus == "Imtechella" & Species == "halotolerans") 
+spike_in_Allobacillus <- subset(taxonomy,Family == "Bacillaceae" & Genus == "Allobacillus" & Species == "halotolerans") 
+
+spike_in_asv_Imtechella <- rownames(spike_in_Imtechella)
+spike_in_asv_Allobacillus <- rownames(spike_in_Allobacillus)
+spike_in_asv_both <- c(spike_in_asv_Imtechella, spike_in_asv_Allobacillus)
+sequencing_data$spike_in_sum <- rowSums(sequencing_data[, spike_in_asv_both, drop = FALSE])
+sequencing_data <- sequencing_data[, !colnames(sequencing_data) %in% spike_in_asv_both]
+print(sequencing_data)
+```
+
+
+
+```{r}
+# Theoretical values
+theoretical_values <- data.frame(
+  Sample = "Theoretical",
+  Family_plot = c("Pseudomonas", "Escherichia-Shigella", "Salmonella", "Limosilactobacillus",
+                  "Enterococcus", "Staphylococcus", "Listeria", "Bacillus"),
+  Abundance = c(0.036, 0.106, 0.100, 0.190, 0.113, 0.145, 0.140, 0.170)
+)
+
+#pre-defined--- Abundance = c(0.042, 0.101, 0.104, 0.184, 0.099, 0.155, 0.141, 0.174)
+#lot-secific--- Abundance = c(0.036, 0.106, 0.100, 0.190, 0.113, 0.145, 0.140, 0.170)
+
+# Top 20 ASVs by abundance
+top20 <- names(sort(taxa_sums(ps), decreasing = TRUE))[1:20]
+
+# Relative abundance transformation
+ps.rel <- transform_sample_counts(ps, function(OTU) OTU / sum(OTU))
+ps.melt <- psmelt(ps.rel)
+
+# Clean up Genus names
+ps.melt$Genus <- as.character(ps.melt$Genus)
+ps.melt$Genus[is.na(ps.melt$Genus)] <- "Unknown"
+
+# Create plotting group
+ps.melt$Family_plot <- ps.melt$Genus
+ps.melt$Family_plot[!ps.melt$OTU %in% top20] <- "Other"
+
+# Aggregate data by sample and Family_plot
+ps.agg <- ps.melt %>%
+  group_by(Sample, Family_plot) %>%
+  summarise(Abundance = sum(Abundance), .groups = 'drop')
+
+# Define color palette
+unique_families <- sort(unique(ps.agg$Family_plot[ps.agg$Family_plot != "Other"]))
+dull_colors <- c("#8B5A2B", "#A0522D", "#556B2F", "#6B8E23", "#2E8B57",
+                 "#4682B4", "#5F9EA0", "#708090", "#BC8F8F", "#C2B280",
+                 "#8FBC8F", "#BDB76B", "#D2B48C", "#A9A9A9", "#C0C0C0",
+                 "#778899", "#CD853F", "#90EE90", "#87CEFA", "#A0522D")
+
+colors <- c("Other" = "lightgray")
+if (length(unique_families) > 0) {
+  colors <- c(colors, setNames(dull_colors[1:length(unique_families)], unique_families))
+}
+
+# Combine theoretical and observed
+ps.agg_extended <- bind_rows(theoretical_values, ps.agg)
+
+ordered_families <- setdiff(unique(ps.agg_extended$Family_plot), "Other")
+ps.agg_extended$Family_plot <- factor(
+  ps.agg_extended$Family_plot,
+  levels = c("Other", sort(ordered_families))
+)
+# Reorder samples so "Theoretical" is first
+ps.agg_extended$Sample <- factor(
+  ps.agg_extended$Sample,
+  levels = c("Theoretical", sort(setdiff(unique(ps.agg_extended$Sample), "Theoretical")))
+)
+
+# Plot
+ggplot(ps.agg_extended, aes(x = Sample, y = Abundance, fill = Family_plot)) +
+  geom_bar(stat = "identity") +
+  labs(y = "Relative Abundance") +
+  scale_fill_manual(values = colors) +
+  scale_x_discrete(labels = c(
+    "Theoretical" = "Theoretical",
+    "Q_B_S7" = "Q Blank", "Z_B_S14" = "Z Blank",
+    "Q_2_1_S1" = "Q 2-Fold Dilution Rep1", "Q_2_2_S2" = "Q 2-Fold Dilution Rep2", 
+    "Q_20_2_S4" = "Q 20-Fold Dilution Rep1", "Q_20_1_S3" = "Q 20-Fold Dilution Rep1", 
+    "Q_200_1_S5" = "Q 200-Fold Dilution Rep1", "Q_200_2_S6" = "Q 200-Fold Dilution Rep1", 
+    "Z_2_1_S8" = "Z 2-Fold Dilution Rep1", "Z_2_2_S9" = "Z 2-Fold Dilution Rep2", 
+    "Z_20_2_S11" = "Z 20-Fold Dilution Rep1", "Z_20_1_S10" = "Z 20-Fold Dilution Rep1", 
+    "Z_200_1_S12" = "Z 200-Fold Dilution Rep1", "Z_200_2_S13" = "Z 200-Fold Dilution Rep1"
+  )) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_line(color = "gray90", size = 0.3),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 17),
+    axis.title.y = element_text(size = 17),
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right"
+  ) +
+  guides(fill = guide_legend(title = "Genus"))
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+df_Q <- sequencing_data[grepl("^Q", rownames(sequencing_data)), ]
+df_Z <- sequencing_data[grepl("^Z", rownames(sequencing_data)), ]
+print(df_Q)
+```
+
+Q
+```{r}
+Q_spike_in_cell_count = 2*(10^6)
+df_Q_normalized<- df_Q
+other_cols <- colnames(df_Q)[colnames(df_Q) != "spike_in_sum"]
+df_Q_normalized[, other_cols] <- Q_spike_in_cell_count / df_Q$spike_in_sum * df_Q[, other_cols]
+df_Q_normalized <- df_Q_normalized[, colnames(df_Q_normalized) != "spike_in_sum"]
+print(df_Q_normalized)
+```
+```{r}
+other_cols <- setdiff(colnames(df_Q_normalized), c("Sample"))
+asv_data <- df_Q_normalized[, other_cols]
+asv_totals <- colSums(asv_data)
+top_20_asvs <- names(sort(asv_totals, decreasing = TRUE)[1:8])
+plot_data <- asv_data
+plot_data$Sample <- rownames(plot_data)
+plot_data$Other <- rowSums(plot_data[, !colnames(plot_data) %in% c(top_20_asvs, "Sample")])
+plot_data <- plot_data[, c("Sample", top_20_asvs, "Other")]
+plot_data_long <- pivot_longer(plot_data, 
+                              cols = -Sample, 
+                              names_to = "ASV", 
+                              values_to = "Abundance")
+taxonomy$ASV <- rownames(taxonomy)
+tax_labels <- setNames(taxonomy$Genus, taxonomy$ASV) 
+plot_data_long$Taxonomy <- ifelse(plot_data_long$ASV == "Other", 
+                                  "Other", 
+                                  tax_labels[plot_data_long$ASV])
+
+plot_data_long$Taxonomy[is.na(plot_data_long$Taxonomy)] <- plot_data_long$ASV[is.na(plot_data_long$Taxonomy)]
+top_20_taxonomy <- tax_labels[top_20_asvs]
+taxonomy_counts <- table(top_20_taxonomy)
+duplicated_taxa <- names(taxonomy_counts[taxonomy_counts > 1])
+for (taxa in duplicated_taxa) {
+  matching_asvs <- names(top_20_taxonomy[top_20_taxonomy == taxa])
+  for (i in seq_along(matching_asvs)) {
+    asv_name <- matching_asvs[i]
+    plot_data_long$Taxonomy[plot_data_long$ASV == asv_name] <- 
+      paste(taxa, paste0("(", asv_name, ")"))
+  }
+}
+unique_taxonomy_levels <- unique(c("Other", plot_data_long$Taxonomy[plot_data_long$ASV %in% top_20_asvs]))
+plot_data_long$Taxonomy <- factor(plot_data_long$Taxonomy, 
+                                  levels = unique_taxonomy_levels)
+colors <- c("lightgray", 
+                  colorRampPalette(c("#8B5A2B", "#A0522D", "#556B2F", "#6B8E23", "#2E8B57",
+  "#4682B4", "#5F9EA0", "#708090", "#BC8F8F", "#C2B280",
+  "#8FBC8F", "#BDB76B", "#D2B48C", "#A9A9A9", "#C0C0C0",
+  "#778899", "#CD853F", "#90EE90", "#87CEFA", "#A0522D"))(20))
+
+ggplot(plot_data_long, aes(x = Sample, y = Abundance, fill = Taxonomy)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  labs(title = "Qiagen Extracted Samples", 
+       x = "Sample", 
+       y = "Absolute Abundance") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),  # X-axis labels
+    axis.text.y = element_text(size = 12),                        # Y-axis labels
+    axis.title.x = element_text(size = 17),                       # X-axis title
+    axis.title.y = element_text(size = 17),                       # Y-axis title
+    plot.title = element_text(size = 16, face = "bold"),          # Plot title
+    legend.text = element_text(size = 10),                        # Legend text
+    legend.title = element_text(size = 12, face = "bold"),        # Legend title
+    legend.position = "right"
+  ) +
+  scale_fill_manual(values = colors) +
+  guides(fill = guide_legend(title = "Genus", ncol = 1)) +
+  scale_x_discrete(labels = c(
+    "Theoretical" = "Theoretical",
+    "Q_B_S7" = "Q Blank", "Z_B_S14" = "Z Blank",
+    "Q_2_1_S1" = "Q 2-Fold Dilution Rep1", "Q_2_2_S2" = "Q 2-Fold Dilution Rep2", 
+    "Q_20_2_S4" = "Q 20-Fold Dilution Rep1", "Q_20_1_S3" = "Q 20-Fold Dilution Rep1", 
+    "Q_200_1_S5" = "Q 200-Fold Dilution Rep1", "Q_200_2_S6" = "Q 200-Fold Dilution Rep1", 
+    "Z_2_1_S8" = "Z 2-Fold Dilution Rep1", "Z_2_2_S9" = "Z 2-Fold Dilution Rep2", 
+    "Z_20_2_S11" = "Z 20-Fold Dilution Rep1", "Z_20_1_S10" = "Z 20-Fold Dilution Rep1", 
+    "Z_200_1_S12" = "Z 200-Fold Dilution Rep1", "Z_200_2_S13" = "Z 200-Fold Dilution Rep1"
+  ))
+```
+
+```{r}
+Q_zoom_panel <- df_Q_normalized[
+  rownames(df_Q_normalized) %in% c("Q_200_1_S5", "Q_200_2_S6"),
+  ,
+  drop = FALSE
+]
+other_cols <- setdiff(colnames(Q_zoom_panel), c("Sample"))
+asv_data <- Q_zoom_panel[, other_cols]
+asv_totals <- colSums(asv_data)
+top_20_asvs <- names(sort(asv_totals, decreasing = TRUE)[1:8])
+plot_data <- asv_data
+plot_data$Sample <- rownames(plot_data)
+plot_data$Other <- rowSums(plot_data[, !colnames(plot_data) %in% c(top_20_asvs, "Sample")])
+plot_data <- plot_data[, c("Sample", top_20_asvs, "Other")]
+plot_data_long <- pivot_longer(plot_data, 
+                              cols = -Sample, 
+                              names_to = "ASV", 
+                              values_to = "Abundance")
+taxonomy$ASV <- rownames(taxonomy)
+tax_labels <- setNames(taxonomy$Genus, taxonomy$ASV) 
+plot_data_long$Taxonomy <- ifelse(plot_data_long$ASV == "Other", 
+                                  "Other", 
+                                  tax_labels[plot_data_long$ASV])
+
+plot_data_long$Taxonomy[is.na(plot_data_long$Taxonomy)] <- plot_data_long$ASV[is.na(plot_data_long$Taxonomy)]
+top_20_taxonomy <- tax_labels[top_20_asvs]
+taxonomy_counts <- table(top_20_taxonomy)
+duplicated_taxa <- names(taxonomy_counts[taxonomy_counts > 1])
+for (taxa in duplicated_taxa) {
+  matching_asvs <- names(top_20_taxonomy[top_20_taxonomy == taxa])
+  for (i in seq_along(matching_asvs)) {
+    asv_name <- matching_asvs[i]
+    plot_data_long$Taxonomy[plot_data_long$ASV == asv_name] <- 
+      paste(taxa, paste0("(", asv_name, ")"))
+  }
+}
+unique_taxonomy_levels <- unique(c("Other", plot_data_long$Taxonomy[plot_data_long$ASV %in% top_20_asvs]))
+plot_data_long$Taxonomy <- factor(plot_data_long$Taxonomy, 
+                                  levels = unique_taxonomy_levels)
+colors <- c("lightgray", 
+                  colorRampPalette(c("#8B5A2B", "#A0522D", "#556B2F", "#6B8E23", "#2E8B57",
+  "#4682B4", "#5F9EA0", "#708090", "#BC8F8F", "#C2B280",
+  "#8FBC8F", "#BDB76B", "#D2B48C", "#A9A9A9", "#C0C0C0",
+  "#778899", "#CD853F", "#90EE90", "#87CEFA", "#A0522D"))(20))
+
+
+ggplot(plot_data_long, aes(x = Sample, y = Abundance, fill = Taxonomy)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  labs(title = "Qiagen Zoom Panel", 
+       x = "Sample", 
+       y = "Absolute Abundance") +
+  scale_y_continuous(labels = label_scientific(digits = 2)) +  # <-- scientific notation
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 22),
+    axis.title.x = element_text(size = 17),
+    axis.title.y = element_text(size = 17),
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right"
+  ) +
+  scale_fill_manual(values = colors)
+```
+
+Z
+```{r}
+Z_spike_in_cell_count = 4*(10^6)
+df_Z_normalized<- df_Z
+other_cols <- colnames(df_Z)[colnames(df_Z) != "spike_in_sum"]
+df_Z_normalized[, other_cols] <- Z_spike_in_cell_count / df_Z$spike_in_sum * df_Z[, other_cols]
+df_Z_normalized <- df_Z_normalized[, colnames(df_Z_normalized) != "spike_in_sum"]
+print(df_Z_normalized)
+row_sums <- rowSums(df_Q_normalized)
+print(row_sums)
+
+```
+
+```{r}
+other_cols <- setdiff(colnames(df_Z_normalized), c("Sample"))
+asv_data <- df_Z_normalized[, other_cols]
+asv_totals <- colSums(asv_data)
+top_20_asvs <- names(sort(asv_totals, decreasing = TRUE)[1:8])
+plot_data <- asv_data
+plot_data$Sample <- rownames(plot_data)
+plot_data$Other <- rowSums(plot_data[, !colnames(plot_data) %in% c(top_20_asvs, "Sample")])
+plot_data <- plot_data[, c("Sample", top_20_asvs, "Other")]
+plot_data_long <- pivot_longer(plot_data, 
+                              cols = -Sample, 
+                              names_to = "ASV", 
+                              values_to = "Abundance")
+taxonomy$ASV <- rownames(taxonomy)
+tax_labels <- setNames(taxonomy$Genus, taxonomy$ASV) 
+plot_data_long$Taxonomy <- ifelse(plot_data_long$ASV == "Other", 
+                                  "Other", 
+                                  tax_labels[plot_data_long$ASV])
+
+plot_data_long$Taxonomy[is.na(plot_data_long$Taxonomy)] <- plot_data_long$ASV[is.na(plot_data_long$Taxonomy)]
+top_20_taxonomy <- tax_labels[top_20_asvs]
+taxonomy_counts <- table(top_20_taxonomy)
+duplicated_taxa <- names(taxonomy_counts[taxonomy_counts > 1])
+for (taxa in duplicated_taxa) {
+  matching_asvs <- names(top_20_taxonomy[top_20_taxonomy == taxa])
+  for (i in seq_along(matching_asvs)) {
+    asv_name <- matching_asvs[i]
+    plot_data_long$Taxonomy[plot_data_long$ASV == asv_name] <- 
+      paste(taxa, paste0("(", asv_name, ")"))
+  }
+}
+unique_taxonomy_levels <- unique(c("Other", plot_data_long$Taxonomy[plot_data_long$ASV %in% top_20_asvs]))
+plot_data_long$Taxonomy <- factor(plot_data_long$Taxonomy, 
+                                  levels = unique_taxonomy_levels)
+colors <- c("lightgray", 
+                  colorRampPalette(c("#8B5A2B", "#A0522D", "#556B2F", "#6B8E23", "#2E8B57",
+  "#4682B4", "#5F9EA0", "#708090", "#BC8F8F", "#C2B280",
+  "#8FBC8F", "#BDB76B", "#D2B48C", "#A9A9A9", "#C0C0C0",
+  "#778899", "#CD853F", "#90EE90", "#87CEFA", "#A0522D"))(20))
+
+ggplot(plot_data_long, aes(x = Sample, y = Abundance, fill = Taxonomy)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  labs(title = "Zymo Extracted Samples", 
+       x = "Sample", 
+       y = "Absolute Abundance") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),  # X-axis labels
+    axis.text.y = element_text(size = 12),                        # Y-axis labels
+    axis.title.x = element_text(size = 17),                       # X-axis title
+    axis.title.y = element_text(size = 17),                       # Y-axis title
+    plot.title = element_text(size = 16, face = "bold"),          # Plot title
+    legend.text = element_text(size = 10),                        # Legend text
+    legend.title = element_text(size = 12, face = "bold"),        # Legend title
+    legend.position = "right"
+  ) +
+  scale_fill_manual(values = colors) +
+  guides(fill = guide_legend(title = "Genus", ncol = 1)) +
+  scale_x_discrete(labels = c(
+    "Theoretical" = "Theoretical",
+    "Q_B_S7" = "Q Blank", "Z_B_S14" = "Z Blank",
+    "Q_2_1_S1" = "Q 2-Fold Dilution Rep1", "Q_2_2_S2" = "Q 2-Fold Dilution Rep2", 
+    "Q_20_2_S4" = "Q 20-Fold Dilution Rep1", "Q_20_1_S3" = "Q 20-Fold Dilution Rep1", 
+    "Q_200_1_S5" = "Q 200-Fold Dilution Rep1", "Q_200_2_S6" = "Q 200-Fold Dilution Rep1", 
+    "Z_2_1_S8" = "Z 2-Fold Dilution Rep1", "Z_2_2_S9" = "Z 2-Fold Dilution Rep2", 
+    "Z_20_2_S11" = "Z 20-Fold Dilution Rep1", "Z_20_1_S10" = "Z 20-Fold Dilution Rep1", 
+    "Z_200_1_S12" = "Z 200-Fold Dilution Rep1", "Z_200_2_S13" = "Z 200-Fold Dilution Rep1"
+  ))
+```
+
+```{r}
+Z_zoom_panel <- df_Z_normalized[
+  rownames(df_Z_normalized) %in% c("Z_200_1_S12", "Z_200_2_S13"),
+  ,
+  drop = FALSE
+]
+other_cols <- setdiff(colnames(Z_zoom_panel), c("Sample"))
+asv_data <- Z_zoom_panel[, other_cols]
+asv_totals <- colSums(asv_data)
+top_20_asvs <- names(sort(asv_totals, decreasing = TRUE)[1:8])
+plot_data <- asv_data
+plot_data$Sample <- rownames(plot_data)
+plot_data$Other <- rowSums(plot_data[, !colnames(plot_data) %in% c(top_20_asvs, "Sample")])
+plot_data <- plot_data[, c("Sample", top_20_asvs, "Other")]
+plot_data_long <- pivot_longer(plot_data, 
+                              cols = -Sample, 
+                              names_to = "ASV", 
+                              values_to = "Abundance")
+taxonomy$ASV <- rownames(taxonomy)
+tax_labels <- setNames(taxonomy$Genus, taxonomy$ASV) 
+plot_data_long$Taxonomy <- ifelse(plot_data_long$ASV == "Other", 
+                                  "Other", 
+                                  tax_labels[plot_data_long$ASV])
+
+plot_data_long$Taxonomy[is.na(plot_data_long$Taxonomy)] <- plot_data_long$ASV[is.na(plot_data_long$Taxonomy)]
+top_20_taxonomy <- tax_labels[top_20_asvs]
+taxonomy_counts <- table(top_20_taxonomy)
+duplicated_taxa <- names(taxonomy_counts[taxonomy_counts > 1])
+for (taxa in duplicated_taxa) {
+  matching_asvs <- names(top_20_taxonomy[top_20_taxonomy == taxa])
+  for (i in seq_along(matching_asvs)) {
+    asv_name <- matching_asvs[i]
+    plot_data_long$Taxonomy[plot_data_long$ASV == asv_name] <- 
+      paste(taxa, paste0("(", asv_name, ")"))
+  }
+}
+unique_taxonomy_levels <- unique(c("Other", plot_data_long$Taxonomy[plot_data_long$ASV %in% top_20_asvs]))
+plot_data_long$Taxonomy <- factor(plot_data_long$Taxonomy, 
+                                  levels = unique_taxonomy_levels)
+colors <- c("lightgray", 
+                  colorRampPalette(c("#8B5A2B", "#A0522D", "#556B2F", "#6B8E23", "#2E8B57",
+  "#4682B4", "#5F9EA0", "#708090", "#BC8F8F", "#C2B280",
+  "#8FBC8F", "#BDB76B", "#D2B48C", "#A9A9A9", "#C0C0C0",
+  "#778899", "#CD853F", "#90EE90", "#87CEFA", "#A0522D"))(20))
+
+ggplot(plot_data_long, aes(x = Sample, y = Abundance, fill = Taxonomy)) +
+  geom_bar(stat = "identity") +
+  theme_bw() +
+  labs(title = "Zymo Zoom Panel", 
+       x = "Sample", 
+       y = "Absolute Abundance") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),  # X-axis labels
+    axis.text.y = element_text(size = 22),                        # Y-axis labels
+    axis.title.x = element_text(size = 17),                       # X-axis title
+    axis.title.y = element_text(size = 17),                       # Y-axis title
+    plot.title = element_text(size = 16, face = "bold"),          # Plot title
+    legend.text = element_text(size = 10),                        # Legend text
+    legend.title = element_text(size = 12, face = "bold"),        # Legend title
+    legend.position = "right"
+  ) +
+  scale_fill_manual(values = colors) 
+```
+
+
+
+
+```{r}
+# Define custom colors for each source
+custom_colors <- c(
+  Z = "#2ca02c",      
+  Q = "#1f77b4",           # orange
+  Theoretical = "#000000"  # green
+)
+
+log10_sum_df_f <- log10_sum_df %>%
+  filter(!id %in% c("Z_B_S14", "Q_B_S7"))
+
+theoretical_values <- tibble(
+  id = c("2_Theoretical", "20_Theoretical", "200_Theoretical"),
+  source = "Theoretical",  # or another tag
+  log10_sum = c(8.7, 7.7, 6.7)  # <- your custom values
+)
+
+plot_data <- bind_rows(log10_sum_df_f, theoretical_values)
+
+
+# Plot
+ggplot(plot_data, aes(x = id, y = log10_sum, fill = source)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = custom_colors) +  # apply custom colors here
+  coord_cartesian(ylim = c(6, NA)) +
+  theme_bw() +
+  labs(
+    title = "Log-transformed absolute abundance",
+    x = "Sample",
+    y = expression(Log[10]~"Total Microbial Load", fill = "Sample Type"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 17),
+    axis.title.y = element_text(size = 17),
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.position = "right"
+  )
+
+```
+
+```{r}
+df <- read.csv("../outputs/for_soil/ASV_spikein_removed.csv", header = TRUE, row.names = 1)
+df <- df[, !(colnames(df) %in% c("a2_B_S10","a2_B_SI_S11"))]
+df
+```
+
+```{r}
+# Load required libraries
+if (!require(pheatmap)) install.packages("pheatmap")
+library(pheatmap)
+
+# Step 1: Convert ASV data to percentages
+convert_to_percentages <- function(df) {
+  cat("Converting to percentages...\n")
+  
+  # Convert each column (sample) to percentages
+  df_percent <- df
+  for (i in 1:ncol(df)) {
+    col_sum <- sum(df[, i], na.rm = TRUE)
+    if (col_sum > 0) {
+      df_percent[, i] <- (df[, i] / col_sum) * 100
+    }
+  }
+  
+  cat("Conversion complete. Sample sums:\n")
+  print(colSums(df_percent, na.rm = TRUE))
+  
+  return(df_percent)
+}
+
+# Step 2: Compute correlations (simplified version)
+compute_correlations <- function(df_percent) {
+  cat("Computing correlations...\n")
+  
+  n_samples <- ncol(df_percent)
+  cor_matrix <- matrix(NA, n_samples, n_samples)
+  rownames(cor_matrix) <- colnames(cor_matrix) <- colnames(df_percent)
+  
+  for (i in 1:n_samples) {
+    for (j in 1:n_samples) {
+      x_raw <- df_percent[, i]
+      y_raw <- df_percent[, j]
+      
+      # Log transform with pseudocount (same as your method)
+      x <- log10(x_raw + 1e-6)
+      y <- log10(y_raw + 1e-6)
+      
+      # Calculate correlation
+      cor_result <- cor.test(x, y, method = "pearson")
+      cor_matrix[i, j] <- as.numeric(cor_result$estimate)
+    }
+    cat("Processed sample", i, "of", n_samples, "\n")
+  }
+  
+  return(cor_matrix)
+}
+
+# Step 3: Notebook-friendly plotting function with transparency and label options
+plot_correlation_heatmap_custom <- function(cor_matrix, 
+                                          custom_labels = NULL,
+                                          color_transparency = 0.8,
+                                          color_scheme = "blue_white_red",
+                                          show_numbers = TRUE,
+                                          number_size = 8,
+                                          title = "Sample Correlations (log10 transformed percentages)",
+                                          save_plot = FALSE,
+                                          plot_width = 10,
+                                          plot_height = 8) {
+  cat("Creating customizable heatmap...\n")
+  
+  # Print matrix info for debugging
+  cat("Matrix dimensions:", dim(cor_matrix), "\n")
+  cat("Matrix range:", range(cor_matrix, na.rm = TRUE), "\n")
+  
+  # Apply custom labels if provided
+  if (!is.null(custom_labels)) {
+    if (length(custom_labels) == nrow(cor_matrix)) {
+      rownames(cor_matrix) <- custom_labels
+      colnames(cor_matrix) <- custom_labels
+      cat("Applied custom labels\n")
+    } else {
+      warning("Number of custom labels doesn't match matrix size. Using original labels.")
+    }
+  }
+  
+  # Define color schemes with transparency
+  create_transparent_colors <- function(colors, alpha = color_transparency) {
+    # Convert colors to RGB and add transparency
+    rgb_colors <- col2rgb(colors)
+    transparent_colors <- rgb(rgb_colors[1,], rgb_colors[2,], rgb_colors[3,], 
+                            alpha = alpha * 255, maxColorValue = 255)
+    return(transparent_colors)
+  }
+  
+  # Color scheme options
+  color_palettes <- list(
+    "blue_white_red" = c("blue", "white", "red"),
+    "blue_red" = c("blue", "red"),
+    "purple_white_orange" = c("purple", "white", "orange"),
+    "green_white_red" = c("green", "white", "red"),
+    "viridis" = c("#440154FF", "#31688EFF", "#35B779FF", "#FDE725FF"),
+    "plasma" = c("#0D0887FF", "#7E03A8FF", "#CC4678FF", "#F89441FF", "#F0F921FF")
+  )
+  
+  # Select color palette
+  if (color_scheme %in% names(color_palettes)) {
+    base_colors <- color_palettes[[color_scheme]]
+  } else {
+    base_colors <- color_palettes[["blue_white_red"]]
+    warning("Unknown color scheme. Using default blue_white_red.")
+  }
+  
+  # Create transparent color ramp
+  color_ramp <- colorRampPalette(base_colors)(100)
+  transparent_colors <- create_transparent_colors(color_ramp, color_transparency)
+  
+  # NOTEBOOK-FRIENDLY APPROACH
+  # Method 1: Try pheatmap with special handling for notebooks
+  tryCatch({
+    cat("Creating pheatmap for notebook...\n")
+    
+    # For R notebooks, we need to capture the plot differently
+    if (save_plot) {
+      # Save to file for persistent viewing
+      png(filename = "correlation_heatmap.png", 
+          width = plot_width * 100, height = plot_height * 100, res = 300)
+    }
+    
+    p <- pheatmap(
+      cor_matrix,
+      color = transparent_colors,
+      display_numbers = show_numbers,
+      number_format = "%.2f",
+      fontsize_number = number_size,
+      main = title,
+      cluster_rows = TRUE,
+      cluster_cols = TRUE,
+      border_color = "white",
+      fontsize = 10,
+      fontsize_row = 12,
+      fontsize_col = 12,
+      angle_col = 45,
+      silent = FALSE  # Important for notebooks
+    )
+    
+    if (save_plot) {
+      dev.off()
+      cat("Plot saved as 'correlation_heatmap.png'\n")
+    }
+    
+    # Force display in notebook
+    grid::grid.newpage()
+    grid::grid.draw(p$gtable)
+    
+    cat("pheatmap successful!\n")
+    return(p)
+    
+  }, error = function(e) {
+    cat("pheatmap failed:", e$message, "\n")
+    cat("Trying alternative methods...\n")
+    
+    # Method 2: ggplot2-based heatmap (more notebook-friendly)
+    if (requireNamespace("ggplot2", quietly = TRUE) && requireNamespace("reshape2", quietly = TRUE)) {
+      library(ggplot2)
+      library(reshape2)
+      
+      # Convert correlation matrix to long format
+      cor_melted <- reshape2::melt(cor_matrix)
+      
+      # Create ggplot heatmap
+      p_gg <- ggplot(cor_melted, aes(Var1, Var2, fill = value)) +
+        geom_tile(alpha = color_transparency) +
+        scale_fill_gradientn(colors = base_colors, 
+                           name = "Correlation",
+                           limits = c(-1, 1)) +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1),
+              axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              plot.title = element_text(hjust = 0.5)) +
+        labs(title = title) +
+        coord_fixed()
+      
+      if (show_numbers) {
+        p_gg <- p_gg + geom_text(aes(label = round(value, 2)), 
+                                size = number_size/3, color = "black")
+      }
+      
+      print(p_gg)
+      cat("ggplot2 heatmap successful!\n")
+      return(p_gg)
+      
+    } else {
+      # Method 3: Base R heatmap as final backup
+      cat("Trying base R heatmap...\n")
+      heatmap(cor_matrix, 
+              col = transparent_colors,
+              main = title,
+              margins = c(10, 10))
+      cat("Base R heatmap successful!\n")
+    }
+  })
+}
+
+# Main function with customization options - NOTEBOOK FRIENDLY
+analyze_asv_custom <- function(df, 
+                              custom_labels = NULL,
+                              color_transparency = 0.8,
+                              color_scheme = "blue_white_red",
+                              show_numbers = TRUE,
+                              number_size = 8,
+                              title = "Sample Correlations (log10 transformed percentages)",
+                              save_plot = FALSE,
+                              use_ggplot = FALSE) {
+  
+  cat("=== STARTING CUSTOMIZABLE ASV CORRELATION ANALYSIS ===\n")
+  
+  # Check input
+  cat("Input data:\n")
+  cat("- Dimensions:", dim(df), "\n")
+  cat("- Class:", class(df), "\n")
+  cat("- Column names:", paste(colnames(df)[1:min(3, ncol(df))], collapse = ", "), "\n")
+  
+  # Step 1: Convert to percentages
+  cat("\n=== STEP 1: PERCENTAGE CONVERSION ===\n")
+  df_percent <- convert_to_percentages(df)
+  
+  # Step 2: Compute correlations
+  cat("\n=== STEP 2: CORRELATION COMPUTATION ===\n")
+  cor_matrix <- compute_correlations(df_percent)
+  
+  # Step 3: Plot with customizations
+  cat("\n=== STEP 3: CUSTOM PLOTTING ===\n")
+  plot_result <- plot_correlation_heatmap_custom(
+    cor_matrix = cor_matrix,
+    custom_labels = custom_labels,
+    color_transparency = color_transparency,
+    color_scheme = color_scheme,
+    show_numbers = show_numbers,
+    number_size = number_size,
+    title = title,
+    save_plot = save_plot
+  )
+  
+  # Summary
+  cat("\n=== SUMMARY ===\n")
+  cat("Mean correlation (excluding diagonal):", 
+      round(mean(cor_matrix[upper.tri(cor_matrix)], na.rm = TRUE), 3), "\n")
+  
+  return(list(
+    df_percent = df_percent,
+    cor_matrix = cor_matrix,
+    plot = plot_result
+  ))
+}
+
+# NOTEBOOK-SPECIFIC FUNCTIONS
+
+# Function 1: Force display pheatmap in notebook
+display_pheatmap_notebook <- function(cor_matrix, custom_labels = NULL, 
+                                     color_transparency = 0.8, title = "Correlation Heatmap") {
+  
+  if (!is.null(custom_labels)) {
+    rownames(cor_matrix) <- colnames(cor_matrix) <- custom_labels
+  }
+  
+  # Create colors with transparency
+  colors <- colorRampPalette(c("blue", "white", "red"))(100)
+  rgb_colors <- col2rgb(colors)
+  transparent_colors <- rgb(rgb_colors[1,], rgb_colors[2,], rgb_colors[3,], 
+                          alpha = color_transparency * 255, maxColorValue = 255)
+  
+  # Use grid to force display
+  library(grid)
+  p <- pheatmap(cor_matrix, 
+                color = transparent_colors,
+                display_numbers = TRUE,
+                main = title,
+                silent = TRUE)  # Silent = TRUE prevents automatic display
+  
+  # Force display in notebook
+  grid.newpage()
+  grid.draw(p$gtable)
+  
+  return(p)
+}
+
+# Function 2: ggplot2-based heatmap (most notebook-friendly)
+create_ggplot_heatmap <- function(cor_matrix, custom_labels = NULL,
+                                 color_transparency = 0.8, 
+                                 color_scheme = "blue_white_red",
+                                 show_numbers = TRUE,
+                                 title = "Sample Correlations") {
+  
+  # Load required packages
+  if (!requireNamespace("ggplot2", quietly = TRUE)) {
+    stop("ggplot2 package required. Install with: install.packages('ggplot2')")
+  }
+  if (!requireNamespace("reshape2", quietly = TRUE)) {
+    stop("reshape2 package required. Install with: install.packages('reshape2')")
+  }
+  
+  library(ggplot2)
+  library(reshape2)
+  
+  # Apply custom labels
+  if (!is.null(custom_labels)) {
+    rownames(cor_matrix) <- colnames(cor_matrix) <- custom_labels
+  }
+  
+  # Color schemes
+  color_palettes <- list(
+    "blue_white_red" = c("blue", "white", "red"),
+    "viridis" = c("#440154FF", "#31688EFF", "#35B779FF", "#FDE725FF"),
+    "plasma" = c("#0D0887FF", "#7E03A8FF", "#CC4678FF", "#F89441FF", "#F0F921FF")
+  )
+  
+  colors <- if (color_scheme %in% names(color_palettes)) {
+    color_palettes[[color_scheme]]
+  } else {
+    color_palettes[["blue_white_red"]]
+  }
+  
+  # Convert to long format
+  cor_melted <- melt(cor_matrix)
+  
+  # Create ggplot
+  p <- ggplot(cor_melted, aes(Var1, Var2, fill = value)) +
+    geom_tile(alpha = color_transparency, color = "white", size = 0.5) +
+    scale_fill_gradientn(colors = colors, 
+                       name = "Correlation",
+                       limits = c(-1, 1)) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+      axis.text.y = element_text(size = 12),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10)
+    ) +
+    labs(title = title) +
+    coord_fixed()
+  
+  if (show_numbers) {
+    p <- p + geom_text(aes(label = round(value, 2)), 
+                      size = 4, color = "black", fontface = "bold")
+  }
+  
+  return(p)
+}
+
+# Function 3: Save plot to file (guaranteed to work)
+save_correlation_plot <- function(cor_matrix, filename = "correlation_heatmap.png",
+                                 custom_labels = NULL, width = 10, height = 8) {
+  
+  if (!is.null(custom_labels)) {
+    rownames(cor_matrix) <- colnames(cor_matrix) <- custom_labels
+  }
+  
+  png(filename, width = width * 100, height = height * 100, res = 300)
+  
+  p <- pheatmap(cor_matrix,
+                color = colorRampPalette(c("blue", "white", "red"))(100),
+                display_numbers = TRUE,
+                main = "Sample Correlations")
+  
+  dev.off()
+  cat("Plot saved as:", filename, "\n")
+  cat("You can now view the image file directly.\n")
+}
+
+# NOTEBOOK TROUBLESHOOTING GUIDE
+print_notebook_solutions <- function() {
+  cat("=== R NOTEBOOK PLOTTING SOLUTIONS ===\n\n")
+  
+  cat("SOLUTION 1 - Use ggplot2 version (most reliable for notebooks):\n")
+  cat("p <- create_ggplot_heatmap(results$cor_matrix, custom_labels = your_labels)\n")
+  cat("print(p)\n\n")
+  
+  cat("SOLUTION 2 - Force pheatmap display:\n") 
+  cat("display_pheatmap_notebook(results$cor_matrix, custom_labels = your_labels)\n\n")
+  
+  cat("SOLUTION 3 - Save to file:\n")
+  cat("save_correlation_plot(results$cor_matrix, 'my_heatmap.png', custom_labels = your_labels)\n\n")
+  
+  cat("SOLUTION 4 - Add this to your notebook chunk options:\n")
+  cat("```{r, fig.show='hold', fig.width=10, fig.height=8}\n")
+  cat("# Your plotting code here\n")
+  cat("```\n\n")
+  
+  cat("SOLUTION 5 - Use analyze_asv_custom with save_plot = TRUE:\n")
+  cat("results <- analyze_asv_custom(df, save_plot = TRUE)\n")
+}
+
+# Convenience function to show available color schemes
+show_color_schemes <- function() {
+  cat("Available color schemes:\n")
+  cat("1. 'blue_white_red' (default)\n")
+  cat("2. 'blue_red'\n") 
+  cat("3. 'purple_white_orange'\n")
+  cat("4. 'green_white_red'\n")
+  cat("5. 'viridis'\n")
+  cat("6. 'plasma'\n")
+}
+
+# USAGE EXAMPLES FOR R NOTEBOOKS:
+
+# RECOMMENDED FOR NOTEBOOKS - Use ggplot2 version:
+# results <- analyze_asv_custom(df)
+# p <- create_ggplot_heatmap(results$cor_matrix, 
+#                           custom_labels = c("H1", "H2", "H3", "L1", "L2", "L3", "M1", "M2", "M3"),
+#                           color_transparency = 0.7)
+# print(p)
+
+# Alternative - Force pheatmap display:
+# results <- analyze_asv_custom(df) 
+# display_pheatmap_notebook(results$cor_matrix, 
+#                          custom_labels = c("H1", "H2", "H3", "L1", "L2", "L3", "M1", "M2", "M3"))
+
+# Save to file (always works):
+# results <- analyze_asv_custom(df)
+# save_correlation_plot(results$cor_matrix, "my_heatmap.png",
+#                      custom_labels = c("H1", "H2", "H3", "L1", "L2", "L3", "M1", "M2", "M3"))
+
+cat("=== NOTEBOOK-FRIENDLY FUNCTIONS LOADED ===\n")
+cat("\nFOR R NOTEBOOKS, USE:\n")
+cat("1. print_notebook_solutions()  # See all solutions\n")
+cat("2. create_ggplot_heatmap()     # Most reliable for notebooks\n") 
+cat("3. display_pheatmap_notebook() # Force pheatmap display\n")
+cat("4. save_correlation_plot()     # Save to file\n")
+cat("\nQuick start for notebooks:\n")
+cat("results <- analyze_asv_custom(df)\n")
+cat("p <- create_ggplot_heatmap(results$cor_matrix)\n")
+cat("print(p)\n")
+
+my_labels <- c("H Site Rep1", "H Site Rep2", "H Site Rep3", "L Site Rep1", "L Site Rep2", "L Site Rep3", "M Site Rep1", "M Site Rep2", "M Site Rep3")
+
+results <- analyze_asv_custom(
+  df = df,
+  custom_labels = my_labels,
+  color_transparency = 0.4,           # 60% opacity
+  color_scheme = "blue_white_red", 
+  show_numbers = TRUE,
+  number_size = 10,
+  title = "ASV Correlation Analysis - Custom Style"
+)
+
+```
+
+```{r}
+# Load required libraries
+library(ggplot2)
+
+# Function to create scatter plot with correlation statistics (matching your make_plot)
+make_correlation_plot <- function(df, col1_name, col2_name, 
+                                transform_to_percent = TRUE,
+                                n_bootstrap = 1000,
+                                x_label = NULL, y_label = NULL) {
+  
+  # Extract the two columns
+  if (!col1_name %in% colnames(df) || !col2_name %in% colnames(df)) {
+    stop("Column names not found in dataframe")
+  }
+  
+  # Extract data as vectors (same as your approach)
+  x_raw <- as.numeric(df[[col1_name]])
+  y_raw <- as.numeric(df[[col2_name]])
+  
+  # Convert to percentages if requested (for ASV data)
+  if (transform_to_percent) {
+    x_raw <- (x_raw / sum(x_raw, na.rm = TRUE)) * 100
+    y_raw <- (y_raw / sum(y_raw, na.rm = TRUE)) * 100
+  }
+  
+  # Apply the same transformation as your make_plot function
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Original correlation
+  cor_result <- cor.test(x, y, method = "pearson")
+  r <- cor_result$estimate
+  p <- cor_result$p.value
+  
+  # Bootstrap correlation
+  n <- length(x)
+  r_boot <- replicate(n_bootstrap, {
+    idx <- sample(seq_len(n), size = n, replace = TRUE)
+    cor(x[idx], y[idx])
+  })
+  
+  # Bootstrap CI
+  ci <- quantile(r_boot, probs = c(0.025, 0.975))
+  
+  # Set labels if not provided
+  if (is.null(x_label)) x_label <- col1_name
+  if (is.null(y_label)) y_label <- col2_name
+  
+  # Create the scatter plot (identical to your make_plot)
+  ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = paste0(x_label),
+      y = paste0(y_label),
+      title = paste0(
+        "r = ", round(r, 3),
+        ", p = ", signif(p, 3),
+        "\n95% CI: [", round(ci[1], 3), ", ", round(ci[2], 3), "]"
+      )
+    ) +
+    theme_bw() +
+    coord_fixed() + 
+    theme(
+      axis.title = element_text(size = 20),
+      axis.text = element_text(size = 18),
+      legend.title = element_text(size = 50),
+      legend.text = element_text(size = 50),
+      plot.title = element_text(size = 22, face = "bold")
+    )
+}
+
+# Function to plot correlation from row data (matching your exact usage pattern)
+make_plot_from_rows <- function(df, row1_name, row2_name, 
+                               x_label = NULL, y_label = NULL,
+                               transform_to_percent = TRUE,
+                               n_bootstrap = 1000) {
+  
+  # Extract rows as vectors (matching your pattern)
+  x_raw <- as.numeric(df[row1_name, ])
+  y_raw <- as.numeric(df[row2_name, ])
+  
+  # Convert to percentages if requested
+  if (transform_to_percent) {
+    x_raw <- (x_raw / sum(x_raw, na.rm = TRUE)) * 100
+    y_raw <- (y_raw / sum(y_raw, na.rm = TRUE)) * 100
+  }
+  
+  # Apply the same transformation as your make_plot function
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Original correlation
+  cor_result <- cor.test(x, y, method = "pearson")
+  r <- cor_result$estimate
+  p <- cor_result$p.value
+  
+  # Bootstrap correlation
+  n <- length(x)
+  r_boot <- replicate(n_bootstrap, {
+    idx <- sample(seq_len(n), size = n, replace = TRUE)
+    cor(x[idx], y[idx])
+  })
+  
+  # Bootstrap CI
+  ci <- quantile(r_boot, probs = c(0.025, 0.975))
+  
+  # Set labels if not provided
+  if (is.null(x_label)) x_label <- row1_name
+  if (is.null(y_label)) y_label <- row2_name
+  
+  # Create the scatter plot (identical to your make_plot)
+  ggplot(data.frame(x = x, y = y), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = paste0(x_label),
+      y = paste0(y_label),
+      title = paste0(
+        "r = ", round(r, 3),
+        ", p = ", signif(p, 3),
+        "\n95% CI: [", round(ci[1], 3), ", ", round(ci[2], 3), "]"
+      )
+    ) +
+    theme_bw() +
+    coord_fixed() + 
+    theme(
+      axis.title = element_text(size = 20),
+      axis.text = element_text(size = 18),
+      legend.title = element_text(size = 50),
+      legend.text = element_text(size = 50),
+      plot.title = element_text(size = 22, face = "bold")
+    )
+}
+
+# Most robust version - handles all edge cases
+make_plot <- function(x_raw, y_raw, x_label, y_label, n_bootstrap = 1000, min_observations = 10) {
+  
+  cat("Debug info:\n")
+  cat("- Original data length:", length(x_raw), "\n")
+  cat("- Non-zero x values:", sum(x_raw > 0, na.rm = TRUE), "\n")
+  cat("- Non-zero y values:", sum(y_raw > 0, na.rm = TRUE), "\n")
+  cat("- Both non-zero:", sum((x_raw > 0) & (y_raw > 0), na.rm = TRUE), "\n")
+  
+  # Apply the same transformation as your original function
+  mask <- (x_raw > 0) | (y_raw > 0)
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  # Remove infinite and NA values
+  finite_mask <- is.finite(x) & is.finite(y)
+  x_clean <- x[finite_mask]
+  y_clean <- y[finite_mask]
+  
+  cat("- Finite observations:", length(x_clean), "\n")
+  
+  # Check if we have enough data and variation
+  if (length(x_clean) < 3) {
+    cat("ERROR: Less than 3 finite observations\n")
+    
+    return(ggplot() + 
+           annotate("text", x = 0.5, y = 0.5, 
+                   label = paste("Insufficient data:\nOnly", length(x_clean), "finite observations"),
+                   size = 8) +
+           labs(title = paste(x_label, "vs", y_label, "- Insufficient Data")) +
+           theme_void())
+  }
+  
+  # Check for variation in both variables
+  x_var <- var(x_clean, na.rm = TRUE)
+  y_var <- var(y_clean, na.rm = TRUE)
+  
+  cat("- X variance:", x_var, "\n")
+  cat("- Y variance:", y_var, "\n")
+  
+  if (is.na(x_var) || is.na(y_var) || x_var == 0 || y_var == 0) {
+    cat("ERROR: No variation in one or both variables\n")
+    
+    return(ggplot(data.frame(x = x_clean, y = y_clean), aes(x = x, y = y)) +
+           geom_point(alpha = 0.6, size = 2) +
+           labs(
+             x = x_label,
+             y = y_label,
+             title = "No variation in data - correlation undefined"
+           ) +
+           theme_bw())
+  }
+  
+  # Try correlation with error handling
+  cor_result <- tryCatch({
+    cor.test(x_clean, y_clean, method = "pearson")
+  }, error = function(e) {
+    cat("Correlation test failed:", e$message, "\n")
+    return(NULL)
+  })
+  
+  if (is.null(cor_result)) {
+    return(ggplot(data.frame(x = x_clean, y = y_clean), aes(x = x, y = y)) +
+           geom_point(alpha = 0.6, size = 2) +
+           labs(
+             x = x_label,
+             y = y_label,
+             title = "Correlation calculation failed"
+           ) +
+           theme_bw())
+  }
+  
+  r <- as.numeric(cor_result$estimate)
+  p <- cor_result$p.value
+  
+  cat("- Correlation successful: r =", r, ", p =", p, "\n")
+  
+  # Bootstrap correlation with error handling
+  n <- length(x_clean)
+  r_boot <- c()
+  
+  for (i in 1:min(n_bootstrap, 100)) {  # Limit bootstrap for debugging
+    tryCatch({
+      idx <- sample(seq_len(n), size = n, replace = TRUE)
+      boot_cor <- cor(x_clean[idx], y_clean[idx], use = "complete.obs")
+      if (is.finite(boot_cor)) {
+        r_boot <- c(r_boot, boot_cor)
+      }
+    }, error = function(e) {
+      # Silently skip failed bootstrap iterations
+    })
+  }
+  
+  cat("- Successful bootstrap iterations:", length(r_boot), "\n")
+  
+  # Bootstrap CI
+  if (length(r_boot) > 10) {
+    ci <- quantile(r_boot, probs = c(0.025, 0.975), na.rm = TRUE)
+    ci_text <- paste0("\n95% CI: [", round(ci[1], 3), ", ", round(ci[2], 3), "]")
+  } else {
+    ci_text <- "\nCI: Not available"
+  }
+  
+  # Create the plot
+  ggplot(data.frame(x = x_clean, y = y_clean), aes(x = x, y = y)) +
+    geom_point(alpha = 0.6, size = 2) +
+    geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
+    labs(
+      x = x_label,
+      y = y_label,
+      title = paste0(
+        "r = ", round(r, 3),
+        ", p = ", signif(p, 3),
+        ci_text,
+        "\nn = ", n
+      )
+    ) +
+    theme_bw() +
+    coord_fixed() + 
+    theme(
+      axis.title = element_text(size = 20),
+      axis.text = element_text(size = 18),
+      plot.title = element_text(size = 22, face = "bold")
+    )
+}
+
+# Simple diagnostic function to check your data before plotting
+diagnose_sample_pair <- function(df, sample1_name, sample2_name, transform_to_percent = TRUE) {
+  
+  cat("=== DIAGNOSTIC REPORT ===\n")
+  cat("Sample 1:", sample1_name, "\n")
+  cat("Sample 2:", sample2_name, "\n")
+  
+  # Extract data
+  x_raw <- as.numeric(df[[sample1_name]])
+  y_raw <- as.numeric(df[[sample2_name]])
+  
+  cat("\n--- RAW DATA ---\n")
+  cat("Total ASVs:", length(x_raw), "\n")
+  cat("Sample 1 sum:", sum(x_raw, na.rm = TRUE), "\n")
+  cat("Sample 2 sum:", sum(y_raw, na.rm = TRUE), "\n")
+  cat("Sample 1 non-zero:", sum(x_raw > 0, na.rm = TRUE), "\n")
+  cat("Sample 2 non-zero:", sum(y_raw > 0, na.rm = TRUE), "\n")
+  cat("Both non-zero:", sum((x_raw > 0) & (y_raw > 0), na.rm = TRUE), "\n")
+  
+  # Convert to percentages if requested
+  if (transform_to_percent) {
+    x_raw <- (x_raw / sum(x_raw, na.rm = TRUE)) * 100
+    y_raw <- (y_raw / sum(y_raw, na.rm = TRUE)) * 100
+    cat("\n--- AFTER PERCENTAGE CONVERSION ---\n")
+    cat("Sample 1 sum:", sum(x_raw, na.rm = TRUE), "%\n")
+    cat("Sample 2 sum:", sum(y_raw, na.rm = TRUE), "%\n")
+  }
+  
+  # Log transform
+  x <- log10(x_raw + 1e-6)
+  y <- log10(y_raw + 1e-6)
+  
+  cat("\n--- AFTER LOG TRANSFORMATION ---\n")
+  cat("Finite x values:", sum(is.finite(x)), "\n")
+  cat("Finite y values:", sum(is.finite(y)), "\n")
+  cat("Both finite:", sum(is.finite(x) & is.finite(y)), "\n")
+  
+  # Clean data
+  finite_mask <- is.finite(x) & is.finite(y)
+  x_clean <- x[finite_mask]
+  y_clean <- y[finite_mask]
+  
+  if (length(x_clean) > 0) {
+    cat("\n--- CLEAN DATA STATISTICS ---\n")
+    cat("Final sample size:", length(x_clean), "\n")
+    cat("X range:", round(range(x_clean), 3), "\n")
+    cat("Y range:", round(range(y_clean), 3), "\n")
+    cat("X variance:", round(var(x_clean), 6), "\n")
+    cat("Y variance:", round(var(y_clean), 6), "\n")
+    
+    # Try a simple correlation
+    if (var(x_clean) > 0 && var(y_clean) > 0) {
+      simple_cor <- cor(x_clean, y_clean)
+      cat("Simple correlation:", round(simple_cor, 4), "\n")
+      cat("DIAGNOSIS: Should work!\n")
+    } else {
+      cat("DIAGNOSIS: No variation - correlation impossible\n")
+    }
+  } else {
+    cat("DIAGNOSIS: No usable data after cleaning\n")
+  }
+  
+  cat("\n=== END DIAGNOSTIC ===\n")
+}
+make_asv_sample_plot <- function(df, sample1_name, sample2_name, 
+                                x_label = NULL, y_label = NULL,
+                                transform_to_percent = TRUE,
+                                n_bootstrap = 1000, min_observations = 10) {
+  
+  # Check if samples exist
+  if (!sample1_name %in% colnames(df) || !sample2_name %in% colnames(df)) {
+    stop("Sample names not found in dataframe columns")
+  }
+  
+  # Extract sample data
+  x_raw <- as.numeric(df[[sample1_name]])
+  y_raw <- as.numeric(df[[sample2_name]])
+  
+  # Convert to percentages if requested
+  if (transform_to_percent) {
+    x_raw <- (x_raw / sum(x_raw, na.rm = TRUE)) * 100
+    y_raw <- (y_raw / sum(y_raw, na.rm = TRUE)) * 100
+  }
+  
+  # Set labels if not provided
+  if (is.null(x_label)) x_label <- sample1_name
+  if (is.null(y_label)) y_label <- sample2_name
+  
+  # Use the robust make_plot function
+  make_plot(x_raw, y_raw, x_label, y_label, n_bootstrap, min_observations)
+}
+
+# Function to easily compare specific samples from your ASV data
+compare_asv_samples <- function(df, sample_pairs, 
+                               transform_to_percent = TRUE,
+                               save_plots = FALSE, plot_dir = "plots") {
+  
+  if (save_plots && !dir.exists(plot_dir)) {
+    dir.create(plot_dir)
+  }
+  
+  plots <- list()
+  
+  for (i in 1:nrow(sample_pairs)) {
+    sample1 <- sample_pairs[i, 1]
+    sample2 <- sample_pairs[i, 2]
+    
+    cat("Creating plot for:", sample1, "vs", sample2, "\n")
+    
+    p <- make_asv_sample_plot(
+      df = df,
+      sample1_name = sample1,
+      sample2_name = sample2,
+      transform_to_percent = transform_to_percent
+    )
+    
+    plots[[paste(sample1, "vs", sample2)]] <- p
+    
+    if (save_plots) {
+      filename <- file.path(plot_dir, paste0(sample1, "_vs_", sample2, ".png"))
+      ggsave(filename, p, width = 10, height = 8, dpi = 300)
+      cat("Saved plot to:", filename, "\n")
+    }
+    
+    print(p)  # Display the plot
+  }
+  
+  return(plots)
+}
+
+# Method 1: Using your exact approach (samples from rows)
+# make_plot(
+#   x_raw = as.numeric(df1[samples[1], ]),
+#   y_raw = as.numeric(df1[samples[2], ]),
+#   x_label = "Sample 1 Label",
+#   y_label = "Sample 2 Label"
+# )
+
+# Method 2: Using column names directly
+# make_correlation_plot(df, "Column1", "Column2", 
+#                      x_label = "Custom X Label", 
+#                      y_label = "Custom Y Label")
+
+# Method 3: Using row names directly
+# make_plot_from_rows(df, "Row1", "Row2",
+#                    x_label = "Custom X Label",
+#                    y_label = "Custom Y Label")
+
+cat("Functions loaded successfully!\n")
+cat("Now you can use:\n")
+cat("1. make_plot() - exactly like your original function\n")
+cat("2. make_correlation_plot() - using column names\n")
+cat("3. make_plot_from_rows() - using row names\n")
+
+make_plot_from_rows(
+  df = df,
+  row1_name = "a2_H1_S1",
+  row2_name = "a2_H2_S2", 
+  x_label = "Custom X Label",
+  y_label = "Custom Y Label"
+)
+```
+
